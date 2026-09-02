@@ -170,8 +170,8 @@ int main( void )
     uart_mutex = xSemaphoreCreateMutex();
     xTaskCreate(uart_send_task, "UartSendTask", 512, (void*)&uartComms, UART_SEND_TASK_PRIORITY, nullptr);
 
-    Codebrane::CBSD cbsd;
-    cbsd.init();
+    SDCard sdcard;
+    sdcard.init();
 
     vTaskStartScheduler();
 
