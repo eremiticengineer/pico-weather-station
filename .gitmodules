@@ -10,3 +10,6 @@
 [submodule "lib/pico-ds3231"]
 	path = lib/pico-ds3231
 	url = https://github.com/eremiticengineer/pico-ds3231
+[submodule "lib/pico-uart-comms"]
+	path = lib/pico-uart-comms
+	url = https://github.com/eremiticengineer/pico-uart-comms

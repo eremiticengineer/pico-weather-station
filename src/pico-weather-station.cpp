@@ -10,6 +10,7 @@
 
 #include "BME280.h"
 #include "DS3231.h"
+#include "UartComms.hpp"
 
 #define DS3231_TASK_PRIORITY (tskIDLE_PRIORITY + 2UL)
 namespace ds3231_config {
@@ -27,8 +28,17 @@ namespace bme280_config {
     inline constexpr uint SCL = 9;
 }
 
+#define UART_SEND_TASK_PRIORITY (tskIDLE_PRIORITY + 2UL)
+namespace uart_config {
+    inline uart_inst_t* const UART_NUM = uart0;
+    inline constexpr uint BAUD = 115200;
+    inline constexpr uint TX = 0;
+    inline constexpr uint RX = 1;
+}
+
 // All the i2c sensors share the semaphore
 SemaphoreHandle_t i2c_mutex;
+SemaphoreHandle_t uart_mutex;
 
 float temperature, pressure, humidity;
 
@@ -109,6 +119,24 @@ void ds3231_task(void* pvParameters) {
 //     vTaskDelete(NULL); // Self-terminate
 // }
 
+void uart_send_task(void* params) {
+    UartComms *pUartComms = static_cast<UartComms *>(params);
+
+    std::string message = "comms data from pico";
+
+    while (true) {
+        if (xSemaphoreTake(uart_mutex, pdMS_TO_TICKS(100))) {
+            pUartComms->send(message);
+
+            printf("wrote '%s', length=%zu\n", message.c_str(), message.size());
+
+            xSemaphoreGive(uart_mutex);
+        }
+
+        vTaskDelay(pdMS_TO_TICKS(1000));
+    }
+}
+
 int main( void )
 {
     stdio_init_all();
@@ -130,6 +158,16 @@ int main( void )
     DS3231 ds3231(ds3231_config::I2C_INSTANCE, ds3231_config::ADDRESS);
     //xTaskCreate(ds3231_setup_task, "RTC Setup", 1024, (void*)&ds3231, tskIDLE_PRIORITY + 2, nullptr);
     xTaskCreate(ds3231_task, "DS3231 Task", 2048, (void*)&ds3231, DS3231_TASK_PRIORITY, nullptr);
+
+    UartComms uartComms(
+        uart_config::UART_NUM,
+        uart_config::BAUD,
+        uart_config::TX,
+        uart_config::RX
+    );
+    uartComms.init();
+    uart_mutex = xSemaphoreCreateMutex();
+    xTaskCreate(uart_send_task, "UartSendTask", 512, (void*)&uartComms, UART_SEND_TASK_PRIORITY, nullptr);
 
     vTaskStartScheduler();
 

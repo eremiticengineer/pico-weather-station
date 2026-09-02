@@ -34,13 +34,15 @@ target_include_directories(${PROJECT} PRIVATE
 add_subdirectory(lib/fmt)
 add_subdirectory(lib/pico-bme280)
 add_subdirectory(lib/pico-ds3231)
+add_subdirectory(lib/pico-uart-comms)
 
 target_link_libraries(${PROJECT}
     pico_stdlib
     FreeRTOS-Kernel-Heap4
     fmt::fmt-header-only
-    pico-bme280
-    pico-ds3231
+    pico_bme280
+    pico_ds3231
+    pico_uart_comms
 )
 
 pico_enable_stdio_usb(${PROJECT} 1)
