@@ -11,6 +11,7 @@
 #include "BME280.h"
 #include "DS3231.h"
 #include "UartComms.hpp"
+#include "sdcard.h"
 
 #define DS3231_TASK_PRIORITY (tskIDLE_PRIORITY + 2UL)
 namespace ds3231_config {
@@ -168,6 +169,9 @@ int main( void )
     uartComms.init();
     uart_mutex = xSemaphoreCreateMutex();
     xTaskCreate(uart_send_task, "UartSendTask", 512, (void*)&uartComms, UART_SEND_TASK_PRIORITY, nullptr);
+
+    Codebrane::CBSD cbsd;
+    cbsd.init();
 
     vTaskStartScheduler();
 

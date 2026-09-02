@@ -71,7 +71,7 @@
 
 /* Memory allocation related definitions. */
 #ifndef configSUPPORT_STATIC_ALLOCATION
-#define configSUPPORT_STATIC_ALLOCATION         0
+#define configSUPPORT_STATIC_ALLOCATION 1
 #endif
 #ifndef configSUPPORT_DYNAMIC_ALLOCATION
 #define configSUPPORT_DYNAMIC_ALLOCATION        1

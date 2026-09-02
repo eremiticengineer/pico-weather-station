@@ -15,6 +15,10 @@ pico_sdk_init()
 
 message(STATUS "PICO_PLATFORM=${PICO_PLATFORM}")
 
+set(FREERTOS_CONFIG_FILE_DIRECTORY
+    ${CMAKE_CURRENT_LIST_DIR}/include
+)
+
 set(FREERTOS_KERNEL_PATH
     ${CMAKE_CURRENT_LIST_DIR}/lib/FreeRTOS-Kernel
 )
@@ -31,10 +35,16 @@ target_include_directories(${PROJECT} PRIVATE
     include/
 )
 
+add_subdirectory(
+    lib/FreeRTOS-FAT-CLI-for-RPi-Pico/src/FreeRTOS+FAT+CLI
+    freertos-fat
+)
+
 add_subdirectory(lib/fmt)
 add_subdirectory(lib/pico-bme280)
 add_subdirectory(lib/pico-ds3231)
 add_subdirectory(lib/pico-uart-comms)
+add_subdirectory(lib/pico-sdcard)
 
 target_link_libraries(${PROJECT}
     pico_stdlib
@@ -43,6 +53,7 @@ target_link_libraries(${PROJECT}
     pico_bme280
     pico_ds3231
     pico_uart_comms
+    pico_sdcard
 )
 
 pico_enable_stdio_usb(${PROJECT} 1)

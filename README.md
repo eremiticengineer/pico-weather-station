@@ -14,6 +14,7 @@ cd pico-weather-station
 git submodule update --init --progress --jobs 4
 git -C lib/FreeRTOS-Kernel submodule update --init --recursive --progress
 git -C lib/fmt submodule update --init --recursive --progress
+git submodule update --init --recursive --progress lib/FreeRTOS-FAT-CLI-for-RPi-Pico
 ```
 
 ## FreeRTOS-Kernal setup for new projects
@@ -28,6 +29,10 @@ git submodule update --init --recursive --progress
 git submodule add https://github.com/eremiticengineer/pico-bme280 lib/pico-bme280
 git submodule add https://github.com/eremiticengineer/pico-ds3231 lib/pico-ds3231
 git submodule add https://github.com/eremiticengineer/pico-uart-comms lib/pico-uart-comms
+git submodule add https://github.com/eremiticengineer/pico-sdcard lib/pico-sdcard
+git submodule add https://github.com/carlk3/FreeRTOS-FAT-CLI-for-RPi-Pico lib/FreeRTOS-FAT-CLI-for-RPi-Pico
+git -C lib/pico-sdcard submodule update --init lib/FreeRTOS-FAT-CLI-for-RPi-Pico
+git submodule update --init --recursive --progress lib/FreeRTOS-FAT-CLI-for-RPi-Pico
 git add .gitmodules lib/FreeRTOS-Kernel
 git add .gitmodules lib/fmt
 ```
