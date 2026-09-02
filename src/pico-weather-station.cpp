@@ -73,15 +73,15 @@ void ds3231_task(void* pvParameters) {
 
                 printf("%s\n", dateTime.c_str());
             }
+            
+            xSemaphoreGive(i2c_mutex);
         }
         else {
             printf("Failed to read time\n");
         }
 
-        xSemaphoreGive(i2c_mutex);
+        vTaskDelay(1000);
     }
-
-    vTaskDelay(1000);
 }
 
 // void ds3231_setup_task(void* pvParameters) {
