@@ -73,7 +73,7 @@ void ds3231_task(void* pvParameters) {
 
                 printf("%s\n", dateTime.c_str());
             }
-            
+
             xSemaphoreGive(i2c_mutex);
         }
         else {
@@ -129,7 +129,7 @@ int main( void )
 
     DS3231 ds3231(ds3231_config::I2C_INSTANCE, ds3231_config::ADDRESS);
     //xTaskCreate(ds3231_setup_task, "RTC Setup", 1024, (void*)&ds3231, tskIDLE_PRIORITY + 2, nullptr);
-    xTaskCreate(ds3231_task, "DS3231 Task", 512, (void*)&ds3231, DS3231_TASK_PRIORITY, nullptr);
+    xTaskCreate(ds3231_task, "DS3231 Task", 2048, (void*)&ds3231, DS3231_TASK_PRIORITY, nullptr);
 
     vTaskStartScheduler();
 
