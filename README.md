@@ -14,7 +14,7 @@ cd pico-weather-station
 git submodule update --init --progress --jobs 4
 git -C lib/FreeRTOS-Kernel submodule update --init --recursive --progress
 git -C lib/fmt submodule update --init --recursive --progress
-git submodule update --init --recursive --progress lib/FreeRTOS-FAT-CLI-for-RPi-Pico
+git -C lib/FreeRTOS-FAT-CLI-for-RPi-Pico submodule update --init --recursive --progress
 ```
 
 ## FreeRTOS-Kernal setup for new projects
