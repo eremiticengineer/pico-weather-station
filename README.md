@@ -9,13 +9,10 @@ work in progress...
 Clone the project with FreeRTOS and sensor submodules to get the pico functionality:
 
 ```
-git clone --recurse-submodules https://github.com/eremiticengineer/pico-weather-station
-```
-
-If you cloned without recursing submodules:
-
-```
-git submodule update --init --recursive
+git clone https://github.com/eremiticengineer/pico-weather-station
+cd pico-weather-station
+git submodule update --init --progress --jobs 4
+git -C lib/FreeRTOS-Kernel submodule update --init --recursive --progress
 ```
 
 ## FreeRTOS-Kernal setup for new projects
