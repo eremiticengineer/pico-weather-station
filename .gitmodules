@@ -4,3 +4,9 @@
 [submodule "lib/pico-bme280"]
 	path = lib/pico-bme280
 	url = https://github.com/eremiticengineer/pico-bme280
+[submodule "lib/fmt"]
+	path = lib/fmt
+	url = https://github.com/fmtlib/fmt
+[submodule "lib/pico-ds3231"]
+	path = lib/pico-ds3231
+	url = https://github.com/eremiticengineer/pico-ds3231

@@ -27,19 +27,20 @@ add_executable(${PROJECT}
     src/pico-weather-station.cpp
 )
 
-
 target_include_directories(${PROJECT} PRIVATE
     include/
 )
 
-add_subdirectory(
-    lib/pico-bme280
-)
+add_subdirectory(lib/fmt)
+add_subdirectory(lib/pico-bme280)
+add_subdirectory(lib/pico-ds3231)
 
 target_link_libraries(${PROJECT}
     pico_stdlib
     FreeRTOS-Kernel-Heap4
+    fmt::fmt-header-only
     pico-bme280
+    pico-ds3231
 )
 
 pico_enable_stdio_usb(${PROJECT} 1)

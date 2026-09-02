@@ -11,8 +11,12 @@ Clone the project with FreeRTOS and sensor submodules to get the pico functional
 ```
 git clone https://github.com/eremiticengineer/pico-weather-station
 cd pico-weather-station
+
 git submodule update --init --progress --jobs 4
+
 git -C lib/FreeRTOS-Kernel submodule update --init --recursive --progress
+
+git -C lib/fmt submodule update --init --recursive --progress
 ```
 
 ## FreeRTOS-Kernal setup for new projects
@@ -22,8 +26,10 @@ When creating a FreeRTOS project from scratch, clone the main branch into the pr
 ```
 git init
 git submodule add https://github.com/FreeRTOS/FreeRTOS-Kernel.git lib/FreeRTOS-Kernel
-git submodule update --init --recursive
+git submodule add https://github.com/fmtlib/fmt lib/fmt
+git submodule update --init --recursive --progress
 git add .gitmodules lib/FreeRTOS-Kernel
+git add .gitmodules lib/fmt
 ```
 
 ## FreeRTOSConfig.h
