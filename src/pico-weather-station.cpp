@@ -139,7 +139,8 @@ void ds3231_task(void* pvParameters) {
 void uart_send_task(void* params) {
     UartComms *pUartComms = static_cast<UartComms *>(params);
 
-    std::string message = "comms data from pico";
+    // temperature,humidity,pressure,windSpeed,windGust,windDirection,rainfall,lux,batteryVoltage,timestamp
+    std::string message = "22.3,76.2,1008.6,8.7,14.2,23,1.4,12500.0,4.87,1788004800";
 
     while (true) {
         if (xSemaphoreTake(uart_mutex, pdMS_TO_TICKS(100))) {
