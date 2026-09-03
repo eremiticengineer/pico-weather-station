@@ -31,17 +31,33 @@ namespace bme280_config {
 
 #define UART_SEND_TASK_PRIORITY (tskIDLE_PRIORITY + 2UL)
 namespace uart_config {
-    inline uart_inst_t* const UART_NUM = uart0;
+    inline uart_inst_t* const UART_NUM = uart1;
     inline constexpr uint BAUD = 115200;
-    inline constexpr uint TX = 0;
-    inline constexpr uint RX = 1;
+    inline constexpr uint TX = 4;
+    inline constexpr uint RX = 5;
 }
+
+#define SDCARD_TASK_PRIORITY (tskIDLE_PRIORITY + 2UL)
 
 // All the i2c sensors share the semaphore
 SemaphoreHandle_t i2c_mutex;
 SemaphoreHandle_t uart_mutex;
 
 float temperature, pressure, humidity;
+
+void write_to_sdcard_task(void* pvParameters) {
+    SDCard *pSDCard = static_cast<SDCard *>(pvParameters);
+    pSDCard->init();
+
+    while (true)
+    {
+        pSDCard->writeAfterInit("test for sdcard testing 3");
+
+        printf("written to sdcard testing 3\n");
+
+        vTaskDelay(pdMS_TO_TICKS(10000));
+    }
+}
 
 void bme280_task(void* pvParameters) {
     BME280 *pBME280 = static_cast<BME280 *>(pvParameters);
@@ -144,21 +160,19 @@ int main( void )
 
     sleep_ms(2000);
 
+    SDCard sdcard;
+
     // All the i2c sensors are on the same instance and same pins
     i2c_init(bme280_config::I2C_INSTANCE, 100 * 1000);
     gpio_set_function(bme280_config::SDA, GPIO_FUNC_I2C);
     gpio_set_function(bme280_config::SCL, GPIO_FUNC_I2C);
     gpio_pull_up(bme280_config::SDA);
     gpio_pull_up(bme280_config::SCL);
-
     i2c_mutex = xSemaphoreCreateMutex();
 
     BME280 bme280(bme280_config::I2C_INSTANCE, bme280_config::ADDRESS);
-    xTaskCreate(bme280_task, "BME280Task", 512, (void*)&bme280, BME280_TASK_PRIORITY, nullptr);
 
     DS3231 ds3231(ds3231_config::I2C_INSTANCE, ds3231_config::ADDRESS);
-    //xTaskCreate(ds3231_setup_task, "RTC Setup", 1024, (void*)&ds3231, tskIDLE_PRIORITY + 2, nullptr);
-    xTaskCreate(ds3231_task, "DS3231 Task", 2048, (void*)&ds3231, DS3231_TASK_PRIORITY, nullptr);
 
     UartComms uartComms(
         uart_config::UART_NUM,
@@ -168,10 +182,12 @@ int main( void )
     );
     uartComms.init();
     uart_mutex = xSemaphoreCreateMutex();
-    xTaskCreate(uart_send_task, "UartSendTask", 512, (void*)&uartComms, UART_SEND_TASK_PRIORITY, nullptr);
 
-    SDCard sdcard;
-    sdcard.init();
+    //xTaskCreate(ds3231_setup_task, "RTC Setup", 1024, (void*)&ds3231, tskIDLE_PRIORITY + 2, nullptr);
+    xTaskCreate(ds3231_task, "DS3231 Task", 2048, (void*)&ds3231, DS3231_TASK_PRIORITY, nullptr);
+    xTaskCreate(bme280_task, "BME280Task", 512, (void*)&bme280, BME280_TASK_PRIORITY, nullptr);
+    xTaskCreate(uart_send_task, "UartSendTask", 512, (void*)&uartComms, UART_SEND_TASK_PRIORITY, nullptr);
+    xTaskCreate(write_to_sdcard_task, "WriteToSDCardTask", 4096, (void*)&sdcard, SDCARD_TASK_PRIORITY, nullptr);
 
     vTaskStartScheduler();
 
