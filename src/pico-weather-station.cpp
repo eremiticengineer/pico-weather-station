@@ -6,6 +6,8 @@
 #include "semphr.h"
 
 #include <string>
+#include <ctime>
+#include <cstring>
 #include <fmt/base.h>
 
 #include "BME280.h"
@@ -43,19 +45,59 @@ namespace uart_config {
 SemaphoreHandle_t i2c_mutex;
 SemaphoreHandle_t uart_mutex;
 
-float temperature, pressure, humidity;
+struct SDCardMessage {
+    char data[256];
+};
+
+QueueHandle_t sdcard_queue;
+
+struct WeatherData {
+    float temperature = 0.0f;
+    float humidity = 0.0f;
+    float pressure = 0.0f;
+
+    float windSpeed = 0.0f;
+    float windGust = 0.0f;
+    uint16_t windDirectionDegrees = 0;
+
+    float rainfall = 0.0f;
+
+    float lux = 0.0f;
+
+    float batteryVoltage = 0.0f;
+
+    uint32_t timestamp = 0;
+
+    char dateTime[20] = "";
+}; WeatherData weatherData;
+
+SemaphoreHandle_t weather_data_mutex;
+
+/*
+ * Callback that gets called when FreeRTOS detects that a task has overflowed its allocated stack.
+ * controlled by definitions in include/FreeRTOSConfig.h
+ * configCHECK_FOR_STACK_OVERFLOW
+ */
+// extern "C" void vApplicationStackOverflowHook(TaskHandle_t xTask, char* pcTaskName) {
+//     printf("STACK OVERFLOW: %s\n", pcTaskName);
+//     while (true) {
+//         tight_loop_contents();
+//     }
+// }
 
 void write_to_sdcard_task(void* pvParameters) {
     SDCard *pSDCard = static_cast<SDCard *>(pvParameters);
     pSDCard->init();
 
+    SDCardMessage message;
+
     while (true)
     {
-        pSDCard->writeAfterInit("test for sdcard testing 3");
+        if (xQueueReceive(sdcard_queue, &message, portMAX_DELAY) == pdTRUE) {
+            pSDCard->writeAfterInit(message.data);
 
-        printf("written to sdcard testing 3\n");
-
-        vTaskDelay(pdMS_TO_TICKS(10000));
+            printf("written to sdcard: '%s'\n", message.data);
+        }
     }
 }
 
@@ -71,13 +113,33 @@ void bme280_task(void* pvParameters) {
         xSemaphoreGive(i2c_mutex);
     }
 
+    float temperature;
+    float pressure;
+    float humidity;
+
     while (true) {
         if (xSemaphoreTake(i2c_mutex, portMAX_DELAY)) {
-            if (pBME280->readSensor(temperature, pressure, humidity)) {
-                printf("T: %.2f°C, P: %.2f hPa, H: %.2f%%\n", temperature, pressure, humidity);
-            }
+            bool sensor_read_success = pBME280->readSensor(temperature, pressure, humidity);
+
             xSemaphoreGive(i2c_mutex);
+
+            if (sensor_read_success) {
+                if (xSemaphoreTake(weather_data_mutex, portMAX_DELAY)) {
+                    weatherData.temperature = temperature;
+                    weatherData.pressure = pressure;
+                    weatherData.humidity = humidity;
+
+                    xSemaphoreGive(weather_data_mutex);
+                }
+
+                printf("T: %.2f°C, P: %.2f hPa, H: %.2f%%\n",
+                    temperature,
+                    pressure,
+                    humidity
+                );
+            }
         }
+
         vTaskDelay(pdMS_TO_TICKS(1000));
     }
 }
@@ -85,23 +147,48 @@ void bme280_task(void* pvParameters) {
 void ds3231_task(void* pvParameters) {
     DS3231 *pDS3231 = static_cast<DS3231 *>(pvParameters);
 
+    struct tm time;
+
     while (true) {
-        struct tm time;
         if (xSemaphoreTake(i2c_mutex, portMAX_DELAY)) {
-            if (pDS3231->readTime(time)) {
-                printf("Date: %02d/%02d/%04d Time: %02d:%02d:%02d\n",
-                time.tm_mday, time.tm_mon + 1, time.tm_year + 1900,
-                time.tm_hour, time.tm_min, time.tm_sec);
-
-                std::string dateTime;
-                dateTime = fmt::format("{:02d}/{:02d}/{:04d} {:02d}:{:02d}:{:02d}",
-                time.tm_mday, time.tm_mon + 1, time.tm_year + 1900,
-                time.tm_hour, time.tm_min, time.tm_sec);
-
-                printf("%s\n", dateTime.c_str());
-            }
+            bool sensor_read_success = pDS3231->readTime(time);
 
             xSemaphoreGive(i2c_mutex);
+
+            if (sensor_read_success) {
+                time_t timestamp = mktime(&time);
+
+                char dateTime[20];
+
+                snprintf(dateTime,
+                    sizeof(dateTime),
+                    "%02d/%02d/%04d %02d:%02d:%02d",
+                    time.tm_mday,
+                    time.tm_mon + 1,
+                    time.tm_year + 1900,
+                    time.tm_hour,
+                    time.tm_min,
+                    time.tm_sec
+                );
+
+                if (xSemaphoreTake(weather_data_mutex, portMAX_DELAY)) {
+                    weatherData.timestamp = static_cast<uint32_t>(timestamp);
+
+                    std::strncpy(weatherData.dateTime, dateTime, sizeof(weatherData.dateTime) - 1);
+
+                    xSemaphoreGive(weather_data_mutex);
+                }
+
+                printf("Date: %02d/%02d/%04d Time: %02d:%02d:%02d timestamp=%lu\n",
+                    time.tm_mday,
+                    time.tm_mon + 1,
+                    time.tm_year + 1900,
+                    time.tm_hour,
+                    time.tm_min,
+                    time.tm_sec,
+                    static_cast<unsigned long>(timestamp)
+                );
+            }
         }
         else {
             printf("Failed to read time\n");
@@ -139,17 +226,69 @@ void ds3231_task(void* pvParameters) {
 void uart_send_task(void* params) {
     UartComms *pUartComms = static_cast<UartComms *>(params);
 
-    // temperature,humidity,pressure,windSpeed,windGust,windDirection,rainfall,lux,batteryVoltage,timestamp
-    std::string message = "22.3,76.2,1008.6,8.7,14.2,23,1.4,12500.0,4.87,1788004800";
-
     while (true) {
-        if (xSemaphoreTake(uart_mutex, pdMS_TO_TICKS(100))) {
-            pUartComms->send(message);
+        WeatherData snapshot;
+        std::string lora_message;
+        std::string sdcard_message;
 
-            printf("wrote '%s', length=%zu\n", message.c_str(), message.size());
+        if (xSemaphoreTake(weather_data_mutex, portMAX_DELAY)) {
+            snapshot = weatherData;
+
+            xSemaphoreGive(weather_data_mutex);
+
+            // Machine-readable CSV for the LoRa broadcaster
+            lora_message = fmt::format(
+                "{:.1f},{:.1f},{:.1f},{:.1f},{:.1f},{},{:.1f},{:.1f},{:.2f},{}",
+                snapshot.temperature,
+                snapshot.humidity,
+                snapshot.pressure,
+                snapshot.windSpeed,
+                snapshot.windGust,
+                snapshot.windDirectionDegrees,
+                snapshot.rainfall,
+                snapshot.lux,
+                snapshot.batteryVoltage,
+                snapshot.timestamp
+            );
+        }
+
+        if (xSemaphoreTake(uart_mutex, pdMS_TO_TICKS(100))) {
+            pUartComms->send(lora_message);
+
+            printf("wrote '%s', length=%zu\n", lora_message.c_str(), lora_message.size());
 
             xSemaphoreGive(uart_mutex);
         }
+
+        // Human-readable version for the SD card
+        sdcard_message = fmt::format(
+            "{} | "
+            "Temperature: {:.1f} C, "
+            "Humidity: {:.1f}%, "
+            "Pressure: {:.1f} hPa, "
+            "Wind: {:.1f} mph, "
+            "Gust: {:.1f} mph, "
+            "Direction: {} deg, "
+            "Rain: {:.1f} mm, "
+            "Lux: {:.1f}, "
+            "Battery: {:.2f} V",
+            snapshot.dateTime,
+            snapshot.temperature,
+            snapshot.humidity,
+            snapshot.pressure,
+            snapshot.windSpeed,
+            snapshot.windGust,
+            snapshot.windDirectionDegrees,
+            snapshot.rainfall,
+            snapshot.lux,
+            snapshot.batteryVoltage
+        );
+
+        SDCardMessage sdcard_message_to_send {};
+
+        std::strncpy(sdcard_message_to_send.data, sdcard_message.c_str(), sizeof(sdcard_message_to_send.data) - 1);
+
+        xQueueSend(sdcard_queue, &sdcard_message_to_send, portMAX_DELAY);
 
         vTaskDelay(pdMS_TO_TICKS(1000));
     }
@@ -162,6 +301,8 @@ int main( void )
     sleep_ms(2000);
 
     SDCard sdcard;
+
+    weather_data_mutex = xSemaphoreCreateMutex();
 
     // All the i2c sensors are on the same instance and same pins
     i2c_init(bme280_config::I2C_INSTANCE, 100 * 1000);
@@ -184,10 +325,12 @@ int main( void )
     uartComms.init();
     uart_mutex = xSemaphoreCreateMutex();
 
+    sdcard_queue = xQueueCreate(8, sizeof(SDCardMessage));
+
     //xTaskCreate(ds3231_setup_task, "RTC Setup", 1024, (void*)&ds3231, tskIDLE_PRIORITY + 2, nullptr);
     xTaskCreate(ds3231_task, "DS3231 Task", 2048, (void*)&ds3231, DS3231_TASK_PRIORITY, nullptr);
     xTaskCreate(bme280_task, "BME280Task", 512, (void*)&bme280, BME280_TASK_PRIORITY, nullptr);
-    xTaskCreate(uart_send_task, "UartSendTask", 512, (void*)&uartComms, UART_SEND_TASK_PRIORITY, nullptr);
+    xTaskCreate(uart_send_task, "UartSendTask", 2048, (void*)&uartComms, UART_SEND_TASK_PRIORITY, nullptr);
     xTaskCreate(write_to_sdcard_task, "WriteToSDCardTask", 4096, (void*)&sdcard, SDCARD_TASK_PRIORITY, nullptr);
 
     vTaskStartScheduler();
