@@ -45,6 +45,7 @@ add_subdirectory(lib/pico-bme280)
 add_subdirectory(lib/pico-ds3231)
 add_subdirectory(lib/pico-uart-comms)
 add_subdirectory(lib/pico-sdcard)
+add_subdirectory(lib/pico-veml7700)
 
 target_link_libraries(${PROJECT}
     pico_stdlib
@@ -54,6 +55,7 @@ target_link_libraries(${PROJECT}
     pico_ds3231
     pico_uart_comms
     pico_sdcard
+    pico_veml7700
 )
 
 pico_enable_stdio_usb(${PROJECT} 1)

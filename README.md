@@ -30,6 +30,7 @@ git submodule add https://github.com/eremiticengineer/pico-bme280 lib/pico-bme28
 git submodule add https://github.com/eremiticengineer/pico-ds3231 lib/pico-ds3231
 git submodule add https://github.com/eremiticengineer/pico-uart-comms lib/pico-uart-comms
 git submodule add https://github.com/eremiticengineer/pico-sdcard lib/pico-sdcard
+git submodule add https://github.com/eremiticengineer/pico-veml7700 lib/pico-veml7700
 git submodule add https://github.com/carlk3/FreeRTOS-FAT-CLI-for-RPi-Pico lib/FreeRTOS-FAT-CLI-for-RPi-Pico
 git -C lib/pico-sdcard submodule update --init lib/FreeRTOS-FAT-CLI-for-RPi-Pico
 git submodule update --init --recursive --progress lib/FreeRTOS-FAT-CLI-for-RPi-Pico

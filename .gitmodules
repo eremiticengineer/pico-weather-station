@@ -22,3 +22,6 @@
 [submodule "lib/FreeRTOS-FAT-CLI-for-RPi-Pico"]
 	path = lib/FreeRTOS-FAT-CLI-for-RPi-Pico
 	url = https://github.com/carlk3/FreeRTOS-FAT-CLI-for-RPi-Pico
+[submodule "lib/pico-veml7700"]
+	path = lib/pico-veml7700
+	url = https://github.com/eremiticengineer/pico-veml7700

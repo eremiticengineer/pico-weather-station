@@ -14,6 +14,7 @@
 #include "DS3231.h"
 #include "UartComms.hpp"
 #include "sdcard.h"
+#include "VEML7700.h"
 
 #define DS3231_TASK_PRIORITY (tskIDLE_PRIORITY + 2UL)
 namespace ds3231_config {
@@ -27,6 +28,14 @@ namespace ds3231_config {
 namespace bme280_config {
     inline constexpr i2c_inst_t* I2C_INSTANCE = i2c0;
     inline constexpr uint8_t ADDRESS = 0x76;
+    inline constexpr uint SDA = 8;
+    inline constexpr uint SCL = 9;
+}
+
+#define VEML7700_SEND_TASK_PRIORITY (tskIDLE_PRIORITY + 2UL)
+namespace veml770_config {
+    inline constexpr i2c_inst_t* I2C_INSTANCE = i2c0;
+    inline constexpr uint8_t ADDRESS = 0x10;
     inline constexpr uint SDA = 8;
     inline constexpr uint SCL = 9;
 }
@@ -223,6 +232,35 @@ void ds3231_task(void* pvParameters) {
 //     vTaskDelete(NULL); // Self-terminate
 // }
 
+void veml7700_task(void *pvParameters) {
+    VEML7700 *pVEML7700 = static_cast<VEML7700 *>(pvParameters);
+
+    if (xSemaphoreTake(i2c_mutex, portMAX_DELAY)) {
+      if (!pVEML7700->begin()) {
+          xSemaphoreGive(i2c_mutex);
+          printf("VEML7700 init failed\n");
+          vTaskDelete(NULL);
+      }
+      xSemaphoreGive(i2c_mutex);
+    }
+
+    float luxValue;
+
+    while (true) {
+        if (xSemaphoreTake(i2c_mutex, portMAX_DELAY)) {
+          if (pVEML7700->readLux(luxValue)) {
+              printf("Lux: %.2f\n", luxValue);
+          }
+          else {
+              printf("Failed to read lux\n");
+          }
+          xSemaphoreGive(i2c_mutex);
+        }
+        
+        vTaskDelay(pdMS_TO_TICKS(1000)); // 1s delay
+    }
+}
+
 void uart_send_task(void* params) {
     UartComms *pUartComms = static_cast<UartComms *>(params);
 
@@ -316,6 +354,8 @@ int main( void )
 
     DS3231 ds3231(ds3231_config::I2C_INSTANCE, ds3231_config::ADDRESS);
 
+    VEML7700 veml770(veml770_config::I2C_INSTANCE, veml770_config::ADDRESS);
+
     UartComms uartComms(
         uart_config::UART_NUM,
         uart_config::BAUD,
@@ -330,6 +370,7 @@ int main( void )
     //xTaskCreate(ds3231_setup_task, "RTC Setup", 1024, (void*)&ds3231, tskIDLE_PRIORITY + 2, nullptr);
     xTaskCreate(ds3231_task, "DS3231 Task", 2048, (void*)&ds3231, DS3231_TASK_PRIORITY, nullptr);
     xTaskCreate(bme280_task, "BME280Task", 512, (void*)&bme280, BME280_TASK_PRIORITY, nullptr);
+    xTaskCreate(veml7700_task, "VEML7700Task", 512, (void*)&veml770, VEML7700_SEND_TASK_PRIORITY, nullptr);
     xTaskCreate(uart_send_task, "UartSendTask", 2048, (void*)&uartComms, UART_SEND_TASK_PRIORITY, nullptr);
     xTaskCreate(write_to_sdcard_task, "WriteToSDCardTask", 4096, (void*)&sdcard, SDCARD_TASK_PRIORITY, nullptr);
 
