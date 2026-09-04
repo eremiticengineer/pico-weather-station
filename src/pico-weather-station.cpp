@@ -9,7 +9,6 @@
 #include <string>
 #include <ctime>
 #include <cstring>
-#include <fmt/base.h>
 
 #include "BME280.h"
 #include "DS3231.h"
@@ -75,8 +74,6 @@ struct WeatherData {
     float windSpeed = 0.0f;
     float windGust = 0.0f;
     uint16_t windDirectionDegrees = 0;
-
-    float rainfall = 0.0f;
 
     float lux = 0.0f;
 
@@ -296,21 +293,24 @@ void uart_send_task(void* params) {
 
             xSemaphoreGive(weather_data_mutex);
 
-            // Machine-readable CSV for the LoRa broadcaster
-            lora_message = fmt::format(
-                "{:.1f},{:.1f},{:.1f},{:.1f},{:.1f},{},{:.1f},{:.1f},{},{:.2f},{}",
+            // CSV for the LoRa broadcaster and sdcard
+            char buffer[256];
+            snprintf(
+                buffer,
+                sizeof(buffer),
+                "%u,%.1f,%.1f,%.1f,%.1f,%.1f,%u,%.1f,%u,%.2f",
+                static_cast<unsigned>(snapshot.timestamp),
                 snapshot.temperature,
-                snapshot.humidity,
                 snapshot.pressure,
+                snapshot.humidity,
                 snapshot.windSpeed,
                 snapshot.windGust,
-                snapshot.windDirectionDegrees,
-                snapshot.rainfall,
+                static_cast<unsigned>(snapshot.windDirectionDegrees),
                 snapshot.lux,
-                snapshot.rainTipCount,
-                snapshot.batteryVoltage,
-                snapshot.timestamp
+                static_cast<unsigned>(snapshot.rainTipCount),
+                snapshot.batteryVoltage
             );
+            lora_message = buffer;
         }
 
         if (xSemaphoreTake(uart_mutex, pdMS_TO_TICKS(100))) {
@@ -321,37 +321,9 @@ void uart_send_task(void* params) {
             xSemaphoreGive(uart_mutex);
         }
 
-        // Human-readable version for the SD card
-        char buffer[256];
-        snprintf(
-            buffer,
-            sizeof(buffer),
-            "%s | "
-            "Temperature: %.1f C, "
-            "Humidity: %.1f%%, "
-            "Pressure: %.1f hPa, "
-            "Wind: %.1f mph, "
-            "Gust: %.1f mph, "
-            "Direction: %u deg, "
-            "Rain: %.1f mm, "
-            "Lux: %.1f, "
-            "Battery: %.2f V",
-            snapshot.dateTime,
-            snapshot.temperature,
-            snapshot.humidity,
-            snapshot.pressure,
-            snapshot.windSpeed,
-            snapshot.windGust,
-            static_cast<unsigned>(snapshot.windDirectionDegrees),
-            snapshot.rainfall,
-            snapshot.lux,
-            snapshot.batteryVoltage
-        );
-        sdcard_message = buffer;
-
         SDCardMessage sdcard_message_to_send {};
 
-        std::strncpy(sdcard_message_to_send.data, sdcard_message.c_str(), sizeof(sdcard_message_to_send.data) - 1);
+        std::strncpy(sdcard_message_to_send.data, lora_message.c_str(), sizeof(sdcard_message_to_send.data) - 1);
 
         xQueueSend(sdcard_queue, &sdcard_message_to_send, portMAX_DELAY);
 
