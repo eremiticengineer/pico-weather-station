@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include "pico/stdlib.h"
+#include "hardware/irq.h"
 
 #include "FreeRTOS.h"
 #include "task.h"
@@ -48,6 +49,12 @@ namespace uart_config {
     inline constexpr uint RX = 5;
 }
 
+#define RAIN_TASK_PRIORITY (tskIDLE_PRIORITY + 2UL)
+namespace rain_config {
+    inline constexpr uint INTERRUPT_PIN = 14;
+    inline constexpr bool CALLBACK_ENABLED = true;
+}
+
 #define SDCARD_TASK_PRIORITY (tskIDLE_PRIORITY + 2UL)
 
 // All the i2c sensors share the semaphore
@@ -73,6 +80,8 @@ struct WeatherData {
 
     float lux = 0.0f;
 
+    uint32_t rainTipCount = 0;
+
     float batteryVoltage = 0.0f;
 
     uint32_t timestamp = 0;
@@ -82,17 +91,24 @@ struct WeatherData {
 
 SemaphoreHandle_t weather_data_mutex;
 
-/*
- * Callback that gets called when FreeRTOS detects that a task has overflowed its allocated stack.
- * controlled by definitions in include/FreeRTOSConfig.h
- * configCHECK_FOR_STACK_OVERFLOW
- */
-// extern "C" void vApplicationStackOverflowHook(TaskHandle_t xTask, char* pcTaskName) {
-//     printf("STACK OVERFLOW: %s\n", pcTaskName);
-//     while (true) {
-//         tight_loop_contents();
-//     }
-// }
+TaskHandle_t sn74hc14n_task_handle = nullptr;
+void rain_tipping_bucket_callback(uint gpio, __unused uint32_t events) {
+  if (gpio == rain_config::INTERRUPT_PIN) {
+      BaseType_t higher_priority_task_woken = pdFALSE;
+      vTaskNotifyGiveFromISR(sn74hc14n_task_handle, &higher_priority_task_woken);
+      portYIELD_FROM_ISR(higher_priority_task_woken);
+  }
+}
+
+void rain_tipping_bucket_task(void *pvParameters) {
+    while (true) {
+        uint32_t pulses = ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+        if (xSemaphoreTake(weather_data_mutex, portMAX_DELAY)) {
+            weatherData.rainTipCount++;
+            xSemaphoreGive(weather_data_mutex);
+        }
+    }
+}
 
 void write_to_sdcard_task(void* pvParameters) {
     SDCard *pSDCard = static_cast<SDCard *>(pvParameters);
@@ -276,7 +292,7 @@ void uart_send_task(void* params) {
 
             // Machine-readable CSV for the LoRa broadcaster
             lora_message = fmt::format(
-                "{:.1f},{:.1f},{:.1f},{:.1f},{:.1f},{},{:.1f},{:.1f},{:.2f},{}",
+                "{:.1f},{:.1f},{:.1f},{:.1f},{:.1f},{},{:.1f},{:.1f},{},{:.2f},{}",
                 snapshot.temperature,
                 snapshot.humidity,
                 snapshot.pressure,
@@ -285,6 +301,7 @@ void uart_send_task(void* params) {
                 snapshot.windDirectionDegrees,
                 snapshot.rainfall,
                 snapshot.lux,
+                snapshot.rainTipCount,
                 snapshot.batteryVoltage,
                 snapshot.timestamp
             );
@@ -328,7 +345,7 @@ void uart_send_task(void* params) {
 
         xQueueSend(sdcard_queue, &sdcard_message_to_send, portMAX_DELAY);
 
-        vTaskDelay(pdMS_TO_TICKS(1000));
+        vTaskDelay(pdMS_TO_TICKS(10000));
     }
 }
 
@@ -349,6 +366,13 @@ int main( void )
     gpio_pull_up(bme280_config::SDA);
     gpio_pull_up(bme280_config::SCL);
     i2c_mutex = xSemaphoreCreateMutex();
+
+    // Rain tipping bucket interrupt
+    gpio_init(rain_config::INTERRUPT_PIN);
+    gpio_set_dir(rain_config::INTERRUPT_PIN, GPIO_IN);
+    gpio_pull_down(rain_config::INTERRUPT_PIN);
+    gpio_set_irq_enabled_with_callback(rain_config::INTERRUPT_PIN, GPIO_IRQ_EDGE_RISE,
+        rain_config::CALLBACK_ENABLED, rain_tipping_bucket_callback);
 
     BME280 bme280(bme280_config::I2C_INSTANCE, bme280_config::ADDRESS);
 
@@ -372,6 +396,7 @@ int main( void )
     xTaskCreate(bme280_task, "BME280Task", 512, (void*)&bme280, BME280_TASK_PRIORITY, nullptr);
     xTaskCreate(veml7700_task, "VEML7700Task", 512, (void*)&veml770, VEML7700_SEND_TASK_PRIORITY, nullptr);
     xTaskCreate(uart_send_task, "UartSendTask", 2048, (void*)&uartComms, UART_SEND_TASK_PRIORITY, nullptr);
+    xTaskCreate(rain_tipping_bucket_task, "RainTippingBucketTask", 512, nullptr, RAIN_TASK_PRIORITY, &sn74hc14n_task_handle);
     xTaskCreate(write_to_sdcard_task, "WriteToSDCardTask", 4096, (void*)&sdcard, SDCARD_TASK_PRIORITY, nullptr);
 
     vTaskStartScheduler();
