@@ -11,6 +11,8 @@
 #include <ctime>
 #include <cstring>
 
+#include "WindMonitor.hpp"
+
 #include "BME280.h"
 #include "DS3231.h"
 #include "UartComms.hpp"
@@ -55,6 +57,12 @@ namespace rain_config {
     inline constexpr bool CALLBACK_ENABLED = true;
 }
 
+#define WIND_MONITOR_TASK_PRIORITY (tskIDLE_PRIORITY + 2UL)
+namespace wind_speed_config {
+    inline constexpr uint INTERRUPT_PIN = 15;
+    inline constexpr bool CALLBACK_ENABLED = true;
+}
+
 #define SDCARD_TASK_PRIORITY (tskIDLE_PRIORITY + 2UL)
 
 // All the i2c sensors share the semaphore
@@ -66,6 +74,8 @@ struct SDCardMessage {
 };
 
 QueueHandle_t sdcard_queue;
+
+static WindMonitor wind_monitor;
 
 /*
  * Set the WeatherData.bootId so the base station knows how many
@@ -113,12 +123,17 @@ struct WeatherData {
 
 SemaphoreHandle_t weather_data_mutex;
 
-TaskHandle_t sn74hc14n_task_handle = nullptr;
-void rain_tipping_bucket_callback(uint gpio, __unused uint32_t events) {
+TaskHandle_t rain_tipping_bucket_task_handle = nullptr;
+TaskHandle_t wind_monitor_task_handle = nullptr;
+
+void wind_speed_and_rain_tipping_bucket_callback(uint gpio, __unused uint32_t events) {
   if (gpio == rain_config::INTERRUPT_PIN) {
       BaseType_t higher_priority_task_woken = pdFALSE;
-      vTaskNotifyGiveFromISR(sn74hc14n_task_handle, &higher_priority_task_woken);
+      vTaskNotifyGiveFromISR(rain_tipping_bucket_task_handle, &higher_priority_task_woken);
       portYIELD_FROM_ISR(higher_priority_task_woken);
+  }
+  else if (gpio == wind_speed_config::INTERRUPT_PIN) {
+    wind_monitor.onPulse();
   }
 }
 
@@ -130,6 +145,30 @@ void rain_tipping_bucket_task(void *pvParameters) {
             xSemaphoreGive(weather_data_mutex);
         }
     }
+}
+
+void wind_monitor_task(void* parameter) {
+    auto* pWind_monitor = static_cast<WindMonitor*>(parameter);
+
+    TickType_t last_wake = xTaskGetTickCount();
+
+    for (;;) {
+        vTaskDelayUntil(&last_wake, pdMS_TO_TICKS(1000));
+
+        int32_t speed = pWind_monitor->sample1s();
+
+        if (xSemaphoreTake(weather_data_mutex, portMAX_DELAY)) {
+            weatherData.windSpeed = pWind_monitor->getRunningAverageMph() / 10.0f;
+            weatherData.windGust = pWind_monitor->getCurrentMinuteMaxGustMph() / 10.0f;
+            xSemaphoreGive(weather_data_mutex);
+        }
+
+        printf(
+            "Wind: %.1f mph, avg: %.1f mph, gust: %.1f mph\n",
+            speed / 10.0,
+            pWind_monitor->getRunningAverageMph() / 10.0,
+            pWind_monitor->getCurrentMinuteMaxGustMph() / 10.0);
+        }
 }
 
 void write_to_sdcard_task(void* pvParameters) {
@@ -380,7 +419,14 @@ int main( void )
     gpio_set_dir(rain_config::INTERRUPT_PIN, GPIO_IN);
     gpio_pull_down(rain_config::INTERRUPT_PIN);
     gpio_set_irq_enabled_with_callback(rain_config::INTERRUPT_PIN, GPIO_IRQ_EDGE_RISE,
-        rain_config::CALLBACK_ENABLED, rain_tipping_bucket_callback);
+        rain_config::CALLBACK_ENABLED, wind_speed_and_rain_tipping_bucket_callback);
+
+    // Wind speed interrupt
+    gpio_init(wind_speed_config::INTERRUPT_PIN);
+    gpio_set_dir(wind_speed_config::INTERRUPT_PIN, GPIO_IN);
+    gpio_pull_down(wind_speed_config::INTERRUPT_PIN);
+    gpio_set_irq_enabled_with_callback(wind_speed_config::INTERRUPT_PIN, GPIO_IRQ_EDGE_RISE,
+        wind_speed_config::CALLBACK_ENABLED, wind_speed_and_rain_tipping_bucket_callback);
 
     BME280 bme280(bme280_config::I2C_INSTANCE, bme280_config::ADDRESS);
 
@@ -404,7 +450,8 @@ int main( void )
     xTaskCreate(bme280_task, "BME280Task", 512, (void*)&bme280, BME280_TASK_PRIORITY, nullptr);
     xTaskCreate(veml7700_task, "VEML7700Task", 512, (void*)&veml770, VEML7700_SEND_TASK_PRIORITY, nullptr);
     xTaskCreate(uart_send_task, "UartSendTask", 2048, (void*)&uartComms, UART_SEND_TASK_PRIORITY, nullptr);
-    xTaskCreate(rain_tipping_bucket_task, "RainTippingBucketTask", 512, nullptr, RAIN_TASK_PRIORITY, &sn74hc14n_task_handle);
+    xTaskCreate(rain_tipping_bucket_task, "RainTippingBucketTask", 512, nullptr, RAIN_TASK_PRIORITY, &rain_tipping_bucket_task_handle);
+    xTaskCreate(wind_monitor_task, "WindMonitorTask", 512, (void*)&wind_monitor, WIND_MONITOR_TASK_PRIORITY, &wind_monitor_task_handle);
     xTaskCreate(write_to_sdcard_task, "WriteToSDCardTask", 4096, (void*)&sdcard, SDCARD_TASK_PRIORITY, nullptr);
 
     vTaskStartScheduler();

@@ -33,6 +33,7 @@ add_executable(${PROJECT}
 
 target_include_directories(${PROJECT} PRIVATE
     include/
+    src/WindMonitor
 )
 
 add_subdirectory(
