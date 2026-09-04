@@ -9,7 +9,7 @@
 static constexpr int32_t WIND_SCALE_NUM = 14920;
 static constexpr int32_t WIND_SCALE_DEN = 10000;
 
-class WindMonitor {
+class WindSpeedMonitor {
 public:
     // Running average of the last 10 x 1-second samples
     static constexpr int RUN_AVG_SIZE = 10;
@@ -20,7 +20,7 @@ public:
     // Maximum gust for each of the last 60 minutes
     static constexpr int GUST_MIN_BUF = 60;
 
-    WindMonitor()
+    WindSpeedMonitor()
         : total_clicks_(0),
           last_clicks_(0),
           run_sum_(0),

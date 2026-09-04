@@ -11,7 +11,7 @@
 #include <ctime>
 #include <cstring>
 
-#include "WindMonitor.hpp"
+#include "WindSpeedMonitor.hpp"
 
 #include "BME280.h"
 #include "DS3231.h"
@@ -75,7 +75,7 @@ struct SDCardMessage {
 
 QueueHandle_t sdcard_queue;
 
-static WindMonitor wind_monitor;
+static WindSpeedMonitor wind_speed_monitor;
 
 /*
  * Set the WeatherData.bootId so the base station knows how many
@@ -133,7 +133,7 @@ void wind_speed_and_rain_tipping_bucket_callback(uint gpio, __unused uint32_t ev
       portYIELD_FROM_ISR(higher_priority_task_woken);
   }
   else if (gpio == wind_speed_config::INTERRUPT_PIN) {
-    wind_monitor.onPulse();
+    wind_speed_monitor.onPulse();
   }
 }
 
@@ -148,7 +148,7 @@ void rain_tipping_bucket_task(void *pvParameters) {
 }
 
 void wind_monitor_task(void* parameter) {
-    auto* pWind_monitor = static_cast<WindMonitor*>(parameter);
+    auto* pWind_monitor = static_cast<WindSpeedMonitor*>(parameter);
 
     TickType_t last_wake = xTaskGetTickCount();
 
@@ -451,7 +451,7 @@ int main( void )
     xTaskCreate(veml7700_task, "VEML7700Task", 512, (void*)&veml770, VEML7700_SEND_TASK_PRIORITY, nullptr);
     xTaskCreate(uart_send_task, "UartSendTask", 2048, (void*)&uartComms, UART_SEND_TASK_PRIORITY, nullptr);
     xTaskCreate(rain_tipping_bucket_task, "RainTippingBucketTask", 512, nullptr, RAIN_TASK_PRIORITY, &rain_tipping_bucket_task_handle);
-    xTaskCreate(wind_monitor_task, "WindMonitorTask", 512, (void*)&wind_monitor, WIND_MONITOR_TASK_PRIORITY, &wind_monitor_task_handle);
+    xTaskCreate(wind_monitor_task, "WindMonitorTask", 512, (void*)&wind_speed_monitor, WIND_MONITOR_TASK_PRIORITY, &wind_monitor_task_handle);
     xTaskCreate(write_to_sdcard_task, "WriteToSDCardTask", 4096, (void*)&sdcard, SDCARD_TASK_PRIORITY, nullptr);
 
     vTaskStartScheduler();
