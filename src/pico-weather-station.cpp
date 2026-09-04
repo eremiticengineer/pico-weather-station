@@ -264,13 +264,19 @@ void veml7700_task(void *pvParameters) {
 
     while (true) {
         if (xSemaphoreTake(i2c_mutex, portMAX_DELAY)) {
-          if (pVEML7700->readLux(luxValue)) {
-              printf("Lux: %.2f\n", luxValue);
-          }
-          else {
-              printf("Failed to read lux\n");
-          }
-          xSemaphoreGive(i2c_mutex);
+            bool sensor_read_success = pVEML7700->readLux(luxValue);
+            if (sensor_read_success) {
+                if (xSemaphoreTake(weather_data_mutex, portMAX_DELAY)) {
+                    weatherData.lux = luxValue;
+                    xSemaphoreGive(weather_data_mutex);
+                }
+
+                printf("Lux: %.2f\n", luxValue);
+            }
+            else {
+                printf("Failed to read lux\n");
+            }
+            xSemaphoreGive(i2c_mutex);
         }
         
         vTaskDelay(pdMS_TO_TICKS(1000)); // 1s delay
@@ -316,28 +322,32 @@ void uart_send_task(void* params) {
         }
 
         // Human-readable version for the SD card
-        sdcard_message = fmt::format(
-            "{} | "
-            "Temperature: {:.1f} C, "
-            "Humidity: {:.1f}%, "
-            "Pressure: {:.1f} hPa, "
-            "Wind: {:.1f} mph, "
-            "Gust: {:.1f} mph, "
-            "Direction: {} deg, "
-            "Rain: {:.1f} mm, "
-            "Lux: {:.1f}, "
-            "Battery: {:.2f} V",
+        char buffer[256];
+        snprintf(
+            buffer,
+            sizeof(buffer),
+            "%s | "
+            "Temperature: %.1f C, "
+            "Humidity: %.1f%%, "
+            "Pressure: %.1f hPa, "
+            "Wind: %.1f mph, "
+            "Gust: %.1f mph, "
+            "Direction: %u deg, "
+            "Rain: %.1f mm, "
+            "Lux: %.1f, "
+            "Battery: %.2f V",
             snapshot.dateTime,
             snapshot.temperature,
             snapshot.humidity,
             snapshot.pressure,
             snapshot.windSpeed,
             snapshot.windGust,
-            snapshot.windDirectionDegrees,
+            static_cast<unsigned>(snapshot.windDirectionDegrees),
             snapshot.rainfall,
             snapshot.lux,
             snapshot.batteryVoltage
         );
+        sdcard_message = buffer;
 
         SDCardMessage sdcard_message_to_send {};
 
