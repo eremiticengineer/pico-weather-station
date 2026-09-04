@@ -34,6 +34,7 @@ add_executable(${PROJECT}
 target_include_directories(${PROJECT} PRIVATE
     include/
     src/WindSpeedMonitor
+    src/WindDirectionMonitor
 )
 
 add_subdirectory(
