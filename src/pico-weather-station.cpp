@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include "pico/stdlib.h"
 #include "hardware/irq.h"
+#include "hardware/structs/rosc.h"
 
 #include "FreeRTOS.h"
 #include "task.h"
@@ -66,6 +67,29 @@ struct SDCardMessage {
 
 QueueHandle_t sdcard_queue;
 
+/*
+ * Set the WeatherData.bootId so the base station knows how many
+ * rainTipsSinceBoot there are as this will reset to zero after
+ * a reboot.
+ */
+uint32_t create_boot_id() {
+    uint32_t value = time_us_32();
+
+    value ^= rosc_hw->randombit << 0;
+    value ^= rosc_hw->randombit << 7;
+    value ^= rosc_hw->randombit << 13;
+    value ^= rosc_hw->randombit << 21;
+    value ^= rosc_hw->randombit << 29;
+
+    value ^= static_cast<uint32_t>(reinterpret_cast<uintptr_t>(&value));
+
+    value ^= value << 13;
+    value ^= value >> 17;
+    value ^= value << 5;
+
+    return value;
+}
+
 struct WeatherData {
     float temperature = 0.0f;
     float humidity = 0.0f;
@@ -77,7 +101,8 @@ struct WeatherData {
 
     float lux = 0.0f;
 
-    uint32_t rainTipCount = 0;
+    uint32_t rainTipsSinceBoot = 0;
+    uint32_t bootId = create_boot_id();
 
     float batteryVoltage = 0.0f;
 
@@ -101,7 +126,7 @@ void rain_tipping_bucket_task(void *pvParameters) {
     while (true) {
         uint32_t pulses = ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
         if (xSemaphoreTake(weather_data_mutex, portMAX_DELAY)) {
-            weatherData.rainTipCount++;
+            weatherData.rainTipsSinceBoot++;
             xSemaphoreGive(weather_data_mutex);
         }
     }
@@ -298,8 +323,9 @@ void uart_send_task(void* params) {
             snprintf(
                 buffer,
                 sizeof(buffer),
-                "%u,%.1f,%.1f,%.1f,%.1f,%.1f,%u,%.1f,%u,%.2f",
+                "%u,%u,%.1f,%.1f,%.1f,%.1f,%.1f,%u,%.1f,%u,%.2f",
                 static_cast<unsigned>(snapshot.timestamp),
+                snapshot.bootId,
                 snapshot.temperature,
                 snapshot.pressure,
                 snapshot.humidity,
@@ -307,7 +333,7 @@ void uart_send_task(void* params) {
                 snapshot.windGust,
                 static_cast<unsigned>(snapshot.windDirectionDegrees),
                 snapshot.lux,
-                static_cast<unsigned>(snapshot.rainTipCount),
+                static_cast<unsigned>(snapshot.rainTipsSinceBoot),
                 snapshot.batteryVoltage
             );
             lora_message = buffer;
