@@ -2,7 +2,15 @@ cmake_minimum_required(VERSION 3.13)
 
 set(PROJECT pico-weather-station)
 
-set(PICO_BOARD pico2 CACHE STRING "Board type")
+if(DEVICE STREQUAL "pico")
+    set(PICO_BOARD pico CACHE STRING "Board type" FORCE)
+elseif(DEVICE STREQUAL "pico2")
+    set(PICO_BOARD pico2 CACHE STRING "Board type" FORCE)
+else()
+    message(FATAL_ERROR
+        "Unknown DEVICE='${DEVICE}'. Use pico, pico2 or seeed_xiao_rp2040."
+    )
+endif()
 
 include($ENV{PICO_SDK_PATH}/external/pico_sdk_import.cmake)
 
@@ -13,6 +21,8 @@ set(CMAKE_CXX_STANDARD 23)
 
 pico_sdk_init()
 
+message(STATUS "DEVICE=${DEVICE}")
+message(STATUS "PICO_BOARD=${PICO_BOARD}")
 message(STATUS "PICO_PLATFORM=${PICO_PLATFORM}")
 
 set(FREERTOS_CONFIG_FILE_DIRECTORY
