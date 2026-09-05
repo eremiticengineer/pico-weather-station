@@ -1,5 +1,31 @@
-mkdir -p build
-rm -rf build/*
-cd build
-cmake ..
+#!/bin/bash
+
+DEVICE="$1"
+
+case "$DEVICE" in
+    pico|pico2)
+        ;;
+    "")
+        echo "No device specified."
+        echo "Supported devices:"
+        echo "  pico"
+        echo "  pico2"
+        exit 1
+        ;;
+    *)
+        echo "Unknown device: $DEVICE"
+        echo "Supported devices:"
+        echo "  pico"
+        echo "  pico2"
+        exit 1
+        ;;
+esac
+
+BUILD_DIR="build-${DEVICE}"
+
+rm -rf "$BUILD_DIR"
+mkdir -p "$BUILD_DIR"
+cd "$BUILD_DIR"
+
+cmake -DDEVICE="$DEVICE" ..
 make -j4
