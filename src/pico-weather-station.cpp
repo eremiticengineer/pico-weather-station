@@ -199,8 +199,8 @@ void wind_direction_monitor_task(void* parameter) {
             xSemaphoreGive(weather_data_mutex);
         }
 
-        printf("Wind direction name = %s\n", wind_direction_data.name);
-        printf("Wind direction degrees = %.1f\n", wind_direction_data.degrees);
+        // printf("Wind direction name = %s\n", wind_direction_data.name);
+        // printf("Wind direction degrees = %.1f\n", wind_direction_data.degrees);
 
         vTaskDelay(pdMS_TO_TICKS(1000));
     }
@@ -253,11 +253,11 @@ void bme280_task(void* pvParameters) {
                     xSemaphoreGive(weather_data_mutex);
                 }
 
-                printf("T: %.2f°C, P: %.2f hPa, H: %.2f%%\n",
-                    temperature,
-                    pressure,
-                    humidity
-                );
+                // printf("T: %.2f°C, P: %.2f hPa, H: %.2f%%\n",
+                //     temperature,
+                //     pressure,
+                //     humidity
+                // );
             }
         }
 
@@ -300,15 +300,15 @@ void ds3231_task(void* pvParameters) {
                     xSemaphoreGive(weather_data_mutex);
                 }
 
-                printf("Date: %02d/%02d/%04d Time: %02d:%02d:%02d timestamp=%lu\n",
-                    time.tm_mday,
-                    time.tm_mon + 1,
-                    time.tm_year + 1900,
-                    time.tm_hour,
-                    time.tm_min,
-                    time.tm_sec,
-                    static_cast<unsigned long>(timestamp)
-                );
+                // printf("Date: %02d/%02d/%04d Time: %02d:%02d:%02d timestamp=%lu\n",
+                //     time.tm_mday,
+                //     time.tm_mon + 1,
+                //     time.tm_year + 1900,
+                //     time.tm_hour,
+                //     time.tm_min,
+                //     time.tm_sec,
+                //     static_cast<unsigned long>(timestamp)
+                // );
             }
         }
         else {
@@ -367,7 +367,7 @@ void veml7700_task(void *pvParameters) {
                     xSemaphoreGive(weather_data_mutex);
                 }
 
-                printf("Lux: %.2f\n", luxValue);
+                // printf("Lux: %.2f\n", luxValue);
             }
             else {
                 printf("Failed to read lux\n");
