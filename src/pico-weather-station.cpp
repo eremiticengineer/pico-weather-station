@@ -20,6 +20,12 @@
 #include "sdcard.h"
 #include "VEML7700.h"
 
+/*
+ * Send to the LoRa broadcaster every 10s.
+ * That will keep the duty cycle well below the 10% limit set by OFCOM in the UK.
+ */
+#define UART_SEND_DELAY_MS 10000
+
 #define DS3231_TASK_PRIORITY (tskIDLE_PRIORITY + 2UL)
 namespace ds3231_config {
     inline constexpr i2c_inst_t* I2C_INSTANCE = i2c0;
@@ -428,7 +434,7 @@ void uart_send_task(void* params) {
 
         xQueueSend(sdcard_queue, &sdcard_message_to_send, portMAX_DELAY);
 
-        vTaskDelay(pdMS_TO_TICKS(10000));
+        vTaskDelay(pdMS_TO_TICKS(UART_SEND_DELAY_MS));
     }
 }
 
