@@ -6,6 +6,7 @@
 #include "FreeRTOS.h"
 #include "task.h"
 #include "semphr.h"
+#include "event_groups.h"
 
 #include <string>
 #include <ctime>
@@ -93,6 +94,20 @@ QueueHandle_t sdcard_queue;
 
 static WindSpeedMonitor wind_speed_monitor;
 
+// Startup for sensors to report readiness
+EventGroupHandle_t weather_ready_events;
+constexpr EventBits_t BME280_READY          = 1 << 0;
+constexpr EventBits_t VEML7700_READY        = 1 << 1;
+constexpr EventBits_t WIND_DIRECTION_READY  = 1 << 2;
+constexpr EventBits_t WIND_SPEED_READY      = 1 << 3;
+constexpr EventBits_t DS3231_READY          = 1 << 4;
+constexpr EventBits_t ALL_READY =
+    BME280_READY |
+    VEML7700_READY |
+    WIND_DIRECTION_READY |
+    WIND_SPEED_READY |
+    DS3231_READY;
+
 /*
  * Set the WeatherData.bootId so the base station knows how many
  * rainTipsSinceBoot there are as this will reset to zero after
@@ -178,6 +193,7 @@ void wind_speed_monitor_task(void* parameter) {
             weatherData.windSpeed = pWind_speed_monitor->getRunningAverageMph() / 10.0f;
             weatherData.windGust = pWind_speed_monitor->getCurrentMinuteMaxGustMph() / 10.0f;
             xSemaphoreGive(weather_data_mutex);
+            xEventGroupSetBits(weather_ready_events, WIND_SPEED_READY);
         }
 
         printf(
@@ -203,6 +219,8 @@ void wind_direction_monitor_task(void* parameter) {
             weatherData.windDirectionDegrees = wind_direction_data.degrees;
 
             xSemaphoreGive(weather_data_mutex);
+
+            xEventGroupSetBits(weather_ready_events, WIND_DIRECTION_READY);
         }
 
         // printf("Wind direction name = %s\n", wind_direction_data.name);
@@ -257,6 +275,8 @@ void bme280_task(void* pvParameters) {
                     weatherData.humidity = humidity;
 
                     xSemaphoreGive(weather_data_mutex);
+
+                    xEventGroupSetBits(weather_ready_events, BME280_READY);
                 }
 
                 // printf("T: %.2f°C, P: %.2f hPa, H: %.2f%%\n",
@@ -304,6 +324,8 @@ void ds3231_task(void* pvParameters) {
                     std::strncpy(weatherData.dateTime, dateTime, sizeof(weatherData.dateTime) - 1);
 
                     xSemaphoreGive(weather_data_mutex);
+
+                    xEventGroupSetBits(weather_ready_events, DS3231_READY);
                 }
 
                 // printf("Date: %02d/%02d/%04d Time: %02d:%02d:%02d timestamp=%lu\n",
@@ -371,6 +393,7 @@ void veml7700_task(void *pvParameters) {
                 if (xSemaphoreTake(weather_data_mutex, portMAX_DELAY)) {
                     weatherData.lux = luxValue;
                     xSemaphoreGive(weather_data_mutex);
+                    xEventGroupSetBits(weather_ready_events, VEML7700_READY);
                 }
 
                 // printf("Lux: %.2f\n", luxValue);
@@ -387,6 +410,15 @@ void veml7700_task(void *pvParameters) {
 
 void uart_send_task(void* params) {
     UartComms *pUartComms = static_cast<UartComms *>(params);
+
+    // Wait for the sensors to take their first reading
+    xEventGroupWaitBits(
+        weather_ready_events,
+        ALL_READY,
+        pdFALSE,
+        pdTRUE,
+        portMAX_DELAY
+    );    
 
     while (true) {
         WeatherData snapshot;
@@ -495,6 +527,9 @@ int main( void )
     uart_mutex = xSemaphoreCreateMutex();
 
     sdcard_queue = xQueueCreate(8, sizeof(SDCardMessage));
+
+    // Make uart_send_task wait for the sensors to take their first reading
+    weather_ready_events = xEventGroupCreate();
 
     //xTaskCreate(ds3231_setup_task, "RTC Setup", 1024, (void*)&ds3231, tskIDLE_PRIORITY + 2, nullptr);
     xTaskCreate(ds3231_task, "DS3231 Task", 2048, (void*)&ds3231, DS3231_TASK_PRIORITY, nullptr);
