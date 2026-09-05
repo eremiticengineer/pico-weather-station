@@ -1,0 +1,5 @@
+# pico
+#cp build-pico/pico-weather-station.uf2 /media/pi/RPI-RP2
+
+# pico2
+cp build-pico2/pico-weather-station.uf2 /media/pi/RP2350
