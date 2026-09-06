@@ -131,6 +131,13 @@ uint32_t create_boot_id() {
     return value;
 }
 
+constexpr uint8_t SENSOR_VALID_BME280         = 1u << 0;
+constexpr uint8_t SENSOR_VALID_VEML7700       = 1u << 1;
+constexpr uint8_t SENSOR_VALID_RAIN_COUNT     = 1u << 3;
+constexpr uint8_t SENSOR_VALID_WIND_SPEED     = 1u << 3;
+constexpr uint8_t SENSOR_VALID_WIND_DIRECTION = 1u << 2;
+constexpr uint8_t SENSOR_VALID_DS3231         = 1u << 4;
+
 struct WeatherData {
     float temperature = 0.0f;
     float humidity = 0.0f;
@@ -151,6 +158,8 @@ struct WeatherData {
     uint32_t timestamp = 0;
 
     char dateTime[20] = "";
+
+    uint8_t validSensors;
 }; WeatherData weatherData;
 
 SemaphoreHandle_t weather_data_mutex;
@@ -174,6 +183,7 @@ void rain_tipping_bucket_task(void *pvParameters) {
         uint32_t pulses = ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
         if (xSemaphoreTake(weather_data_mutex, portMAX_DELAY)) {
             weatherData.rainTipsSinceBoot++;
+            weatherData.validSensors |= SENSOR_VALID_RAIN_COUNT;
             xSemaphoreGive(weather_data_mutex);
         }
     }
@@ -192,6 +202,7 @@ void wind_speed_monitor_task(void* parameter) {
         if (xSemaphoreTake(weather_data_mutex, portMAX_DELAY)) {
             weatherData.windSpeed = pWind_speed_monitor->getRunningAverageMph() / 10.0f;
             weatherData.windGust = pWind_speed_monitor->getCurrentMinuteMaxGustMph() / 10.0f;
+            weatherData.validSensors |= SENSOR_VALID_WIND_SPEED;
             xSemaphoreGive(weather_data_mutex);
             xEventGroupSetBits(weather_ready_events, WIND_SPEED_READY);
         }
@@ -217,6 +228,7 @@ void wind_direction_monitor_task(void* parameter) {
                 wind_direction_data.name
             );
             weatherData.windDirectionDegrees = wind_direction_data.degrees;
+            weatherData.validSensors |= SENSOR_VALID_WIND_DIRECTION;
 
             xSemaphoreGive(weather_data_mutex);
 
@@ -274,6 +286,8 @@ void bme280_task(void* pvParameters) {
                     weatherData.pressure = pressure;
                     weatherData.humidity = humidity;
 
+                    weatherData.validSensors |= SENSOR_VALID_BME280;
+
                     xSemaphoreGive(weather_data_mutex);
 
                     xEventGroupSetBits(weather_ready_events, BME280_READY);
@@ -316,6 +330,8 @@ void ds3231_task(void* pvParameters) {
                     weatherData.timestamp = static_cast<uint32_t>(timestamp);
 
                     std::strncpy(weatherData.dateTime, dateTime, sizeof(weatherData.dateTime) - 1);
+
+                    weatherData.validSensors |= SENSOR_VALID_DS3231;
 
                     xSemaphoreGive(weather_data_mutex);
 
@@ -386,6 +402,7 @@ void veml7700_task(void *pvParameters) {
             if (sensor_read_success) {
                 if (xSemaphoreTake(weather_data_mutex, portMAX_DELAY)) {
                     weatherData.lux = luxValue;
+                    weatherData.validSensors |= SENSOR_VALID_VEML7700;
                     xSemaphoreGive(weather_data_mutex);
                     xEventGroupSetBits(weather_ready_events, VEML7700_READY);
                 }
@@ -429,7 +446,7 @@ void uart_send_task(void* params) {
             snprintf(
                 buffer,
                 sizeof(buffer),
-                "%u,%u,%.1f,%.1f,%.1f,%.1f,%.1f,%s,%u,%.1f,%u,%.2f",
+                "%u,%u,%.1f,%.1f,%.1f,%.1f,%.1f,%s,%u,%.1f,%u,%.2f,%u",
                 static_cast<unsigned>(snapshot.timestamp),
                 snapshot.bootId,
                 snapshot.temperature,
@@ -441,7 +458,8 @@ void uart_send_task(void* params) {
                 static_cast<unsigned>(snapshot.windDirectionDegrees),
                 snapshot.lux,
                 static_cast<unsigned>(snapshot.rainTipsSinceBoot),
-                snapshot.batteryVoltage
+                snapshot.batteryVoltage,
+                static_cast<unsigned>(snapshot.validSensors)
             );
             lora_message = buffer;
         }
