@@ -278,12 +278,6 @@ void bme280_task(void* pvParameters) {
 
                     xEventGroupSetBits(weather_ready_events, BME280_READY);
                 }
-
-                // printf("T: %.2f°C, P: %.2f hPa, H: %.2f%%\n",
-                //     temperature,
-                //     pressure,
-                //     humidity
-                // );
             }
         }
 
@@ -417,7 +411,7 @@ void uart_send_task(void* params) {
         ALL_READY,
         pdFALSE,
         pdTRUE,
-        portMAX_DELAY
+        pdMS_TO_TICKS(5000)
     );    
 
     while (true) {
