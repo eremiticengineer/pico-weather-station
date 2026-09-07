@@ -38,7 +38,12 @@ namespace ds3231_config {
 #define BME280_TASK_PRIORITY (tskIDLE_PRIORITY + 2UL)
 namespace bme280_config {
     inline constexpr i2c_inst_t* I2C_INSTANCE = i2c0;
-    inline constexpr uint8_t ADDRESS = 0x76;
+    //inline constexpr uint8_t ADDRESS = 0x76;
+    // https://www.waveshare.com/wiki/BME280_Environmental_Sensor
+    // Address chip select (default is high):
+    // When the voltage is high, the address is 0 x 77
+    // When the voltage is low, the address is: 0 x 76
+    inline constexpr uint8_t ADDRESS = 0x77;
     inline constexpr uint SDA = 8;
     inline constexpr uint SCL = 9;
 }
