@@ -1,6 +1,5 @@
 #include <stdio.h>
 #include "pico/stdlib.h"
-#include "hardware/irq.h"
 #include "hardware/structs/rosc.h"
 
 #include "FreeRTOS.h"
@@ -23,6 +22,7 @@
 #include "tasks/uart-tasks.hpp"
 #include "tasks/sdcard-tasks.hpp"
 #include "tasks/wind-tasks.hpp"
+#include "tasks/rain-tasks.hpp"
 
 /*
  * Send to the LoRa broadcaster every 10s.
@@ -30,12 +30,41 @@
  */
 #define UART_SEND_DELAY_MS 10000
 
+// The rain tipping bucket ISR will notify this task when the bucket tips
+TaskHandle_t rain_tipping_bucket_task_handle = nullptr;
+
+// Stores the current weather data from all the sensors plus sensor statuses and date/time
+WeatherData weather_data;
+
+// All the i2c sensors share the semaphore
+SemaphoreHandle_t i2c_mutex;
+
+// Shouldn't need it as there is only one uart task
+SemaphoreHandle_t uart_mutex;
+
+// For accessing current weather data from a task
+SemaphoreHandle_t weather_data_mutex;
+
+// The uart task will tell the sdcard task to write the weather data to sd card
+QueueHandle_t sdcard_queue;
+
+// To allow the uart task to wait until the sensors have taken their first reading
+EventGroupHandle_t weather_ready_events;
+
+// Rain tipping bucket IRQ
+namespace rain_config {
+    inline constexpr uint INTERRUPT_PIN = 14;
+    inline constexpr bool CALLBACK_ENABLED = true;
+}
+
+// Anemometer IRQ
 namespace wind_speed_config {
     inline constexpr uint INTERRUPT_PIN = 15;
     inline constexpr bool CALLBACK_ENABLED = true;
 }
 WindSpeedMonitor wind_speed_monitor;
 
+// Wind vain ADC
 namespace wind_direction_config {
     inline spi_inst_t* SPI_INSTANCE = spi0;
     inline constexpr uint CS_PIN = 17;
@@ -51,29 +80,19 @@ WindDirectionMonitor wind_direction_monitor (
     wind_direction_config::MISO_PIN
 );
 
-
-
-
-#define RAIN_TASK_PRIORITY (tskIDLE_PRIORITY + 2UL)
-namespace rain_config {
-    inline constexpr uint INTERRUPT_PIN = 14;
-    inline constexpr bool CALLBACK_ENABLED = true;
+// The ISR is global so keep it here and orchestrate the services
+void wind_speed_and_rain_tipping_bucket_callback(uint gpio, __unused uint32_t events) {
+  if (gpio == rain_config::INTERRUPT_PIN) {
+      BaseType_t higher_priority_task_woken = pdFALSE;
+      // Tell the rain tipping bucket task it needs to do something
+      vTaskNotifyGiveFromISR(rain_tipping_bucket_task_handle, &higher_priority_task_woken);
+      portYIELD_FROM_ISR(higher_priority_task_woken);
+  }
+  else if (gpio == wind_speed_config::INTERRUPT_PIN) {
+    // Anemometer so update the wind speed
+    wind_speed_monitor.onPulse();
+  }
 }
-
-
-
-
-
-// All the i2c sensors share the semaphore
-SemaphoreHandle_t i2c_mutex;
-SemaphoreHandle_t uart_mutex;
-
-
-QueueHandle_t sdcard_queue;
-
-
-
-EventGroupHandle_t weather_ready_events;
 
 /*
  * Set the weather_data.bootId so the base station knows how many
@@ -98,47 +117,15 @@ uint32_t create_boot_id() {
     return value;
 }
 
-SemaphoreHandle_t weather_data_mutex;
-
-TaskHandle_t rain_tipping_bucket_task_handle = nullptr;
-TaskHandle_t wind_speed_monitor_task_handle = nullptr;
-
-WeatherData weather_data;
-
-void wind_speed_and_rain_tipping_bucket_callback(uint gpio, __unused uint32_t events) {
-  if (gpio == rain_config::INTERRUPT_PIN) {
-      BaseType_t higher_priority_task_woken = pdFALSE;
-      vTaskNotifyGiveFromISR(rain_tipping_bucket_task_handle, &higher_priority_task_woken);
-      portYIELD_FROM_ISR(higher_priority_task_woken);
-  }
-  else if (gpio == wind_speed_config::INTERRUPT_PIN) {
-    wind_speed_monitor.onPulse();
-  }
-}
-
-void rain_tipping_bucket_task(void *pvParameters) {
-    while (true) {
-        uint32_t pulses = ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
-        if (xSemaphoreTake(weather_data_mutex, portMAX_DELAY)) {
-            weather_data.rainTipsSinceBoot++;
-            weather_data.validSensors |= SENSOR_VALID_RAIN_COUNT;
-            xSemaphoreGive(weather_data_mutex);
-        }
-    }
-}
-
-
-
-
 int main( void )
 {
     stdio_init_all();
 
+    // Let the host machine catch up
     sleep_ms(2000);
 
+    // This lets the base station LoRa receiver know we've rebooted
     weather_data.bootId = create_boot_id();
-
-    
 
     // All the i2c sensors are on the same instance and same pins
     i2c_init(i2c0, 100 * 1000);
@@ -161,16 +148,13 @@ int main( void )
     gpio_set_irq_enabled_with_callback(wind_speed_config::INTERRUPT_PIN, GPIO_IRQ_EDGE_RISE,
         wind_speed_config::CALLBACK_ENABLED, wind_speed_and_rain_tipping_bucket_callback);
 
-    
-
-
-
-
-
     // Make uart_send_task wait for the sensors to take their first reading
     weather_ready_events = xEventGroupCreate();
  
+    // Allow exclusive access to the current set of weather measurements
     weather_data_mutex = xSemaphoreCreateMutex();
+
+    // Allow exclusive access to the i2c bus
     i2c_mutex = xSemaphoreCreateMutex();
     
     BME280 bme280(i2c0, bme280_config::ADDRESS);
@@ -265,26 +249,37 @@ int main( void )
     constexpr UBaseType_t WIND_DIRECTION_TASK_PRIORITY = tskIDLE_PRIORITY + 2UL;
     constexpr configSTACK_DEPTH_TYPE WIND_DIRECTION_TASK_STACK_SIZE = 512;
 
-
+    RainTaskParams rain_task_params {
+        .weather_data = &weather_data,
+        .weather_data_mutex = weather_data_mutex,
+        .valid_sensor_bit = SENSOR_VALID_RAIN_COUNT
+    };
+    constexpr UBaseType_t RAIN_TASK_PRIORITY = tskIDLE_PRIORITY + 2UL;
 
     //xTaskCreate(ds3231_setup_task, "RTC Setup", 1024, (void*)&ds3231, tskIDLE_PRIORITY + 2, nullptr);
-    xTaskCreate(ds3231_task, "DS3231 Task", DS3231_TASK_STACK_SIZE, (void*)&ds3231_task_params, DS3231_TASK_PRIORITY, nullptr);
+    xTaskCreate(ds3231_task, "DS3231 Task", DS3231_TASK_STACK_SIZE,
+        (void*)&ds3231_task_params, DS3231_TASK_PRIORITY, nullptr);
 
-    xTaskCreate(bme280_task, "BME280Task", BME280_TASK_STACK_SIZE, (void*)&bme280_task_params, BME280_TASK_PRIORITY, nullptr);
+    xTaskCreate(bme280_task, "BME280Task", BME280_TASK_STACK_SIZE,
+        (void*)&bme280_task_params, BME280_TASK_PRIORITY, nullptr);
 
-    xTaskCreate(veml7700_task, "VEML7700Task", VEML7700_TASK_STACK_SIZE, (void*)&veml7700_task_params, VEML7700_TASK_PRIORITY, nullptr);
+    xTaskCreate(veml7700_task, "VEML7700Task", VEML7700_TASK_STACK_SIZE,
+        (void*)&veml7700_task_params, VEML7700_TASK_PRIORITY, nullptr);
 
-    xTaskCreate(uart_send_task, "UartSendTask", UART_SEND_TASK_STACK_SIZE, (void*)&uart_task_params, UART_SEND_TASK_PRIORITY, nullptr);
+    xTaskCreate(uart_send_task, "UartSendTask", UART_SEND_TASK_STACK_SIZE,
+        (void*)&uart_task_params, UART_SEND_TASK_PRIORITY, nullptr);
 
-    xTaskCreate(write_to_sdcard_task, "WriteToSDCardTask", WRITE_TO_SDCARD_TASK_STACK_SIZE, (void*)&sdcard_task_params, WRITE_TO_SDCARD_TASK_PRIORITY, nullptr);
+    xTaskCreate(write_to_sdcard_task, "WriteToSDCardTask", WRITE_TO_SDCARD_TASK_STACK_SIZE,
+        (void*)&sdcard_task_params, WRITE_TO_SDCARD_TASK_PRIORITY, nullptr);
 
-    xTaskCreate(wind_speed_task, "WindSpeedMonitorTask", WIND_SPEED_TASK_STACK_SIZE, (void*)&wind_task_params, WIND_SPEED_TASK_PRIORITY, &wind_speed_monitor_task_handle);
+    xTaskCreate(wind_speed_task, "WindSpeedMonitorTask", WIND_SPEED_TASK_STACK_SIZE,
+        (void*)&wind_task_params, WIND_SPEED_TASK_PRIORITY, nullptr);
 
-    xTaskCreate(wind_direction_task, "WindDirectionMonitorTask", WIND_DIRECTION_TASK_STACK_SIZE, (void*)&wind_task_params, WIND_DIRECTION_TASK_PRIORITY, nullptr);
+    xTaskCreate(wind_direction_task, "WindDirectionMonitorTask", WIND_DIRECTION_TASK_STACK_SIZE,
+        (void*)&wind_task_params, WIND_DIRECTION_TASK_PRIORITY, nullptr);
 
-
-
-    xTaskCreate(rain_tipping_bucket_task, "RainTippingBucketTask", 512, nullptr, RAIN_TASK_PRIORITY, &rain_tipping_bucket_task_handle);
+    xTaskCreate(rain_tipping_bucket_task, "RainTippingBucketTask", 512,
+        (void*)&rain_task_params, RAIN_TASK_PRIORITY, &rain_tipping_bucket_task_handle);
 
     vTaskStartScheduler();
 
