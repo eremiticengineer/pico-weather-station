@@ -24,6 +24,7 @@ struct WindTaskParams {
     EventBits_t ready_bit_wind_direction;
 };
 
+void wind_speed_anemometer_pulse_task(void *pvParameters);
 void wind_speed_task(void *pvParameters);
 void wind_direction_task(void *pvParameters);
 
