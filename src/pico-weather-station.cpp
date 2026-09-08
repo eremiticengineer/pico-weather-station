@@ -21,10 +21,11 @@
 #include "tasks/veml7700-tasks.hpp"
 #include "tasks/ds3231-tasks.hpp"
 #include "tasks/uart-tasks.hpp"
+#include "tasks/sdcard-tasks.hpp"
 
 
 
-#include "sdcard.h"
+
 
 /*
  * Send to the LoRa broadcaster every 10s.
@@ -57,8 +58,6 @@ namespace wind_direction_config {
     inline constexpr uint MOSI_PIN = 19;
     inline constexpr uint MISO_PIN = 16;
 }
-
-#define SDCARD_TASK_PRIORITY (tskIDLE_PRIORITY + 2UL)
 
 // All the i2c sensors share the semaphore
 SemaphoreHandle_t i2c_mutex;
@@ -173,19 +172,6 @@ void wind_direction_monitor_task(void* parameter) {
     }
 }
 
-void write_to_sdcard_task(void* pvParameters) {
-    SDCard *pSDCard = static_cast<SDCard *>(pvParameters);
-    pSDCard->init();
-
-    SDCardMessage message;
-
-    while (true)
-    {
-        if (xQueueReceive(sdcard_queue, &message, portMAX_DELAY) == pdTRUE) {
-            pSDCard->writeAfterInit(message.data);
-        }
-    }
-}
 
 
 int main( void )
@@ -196,7 +182,7 @@ int main( void )
 
     weather_data.bootId = create_boot_id();
 
-    SDCard sd_card;
+    
 
     // All the i2c sensors are on the same instance and same pins
     i2c_init(i2c0, 100 * 1000);
@@ -306,21 +292,13 @@ int main( void )
     constexpr UBaseType_t UART_SEND_TASK_PRIORITY = tskIDLE_PRIORITY + 2UL;
     constexpr configSTACK_DEPTH_TYPE UART_SEND_TASK_STACK_SIZE = 2048;
 
-    
-
-    
-
-
-
-
-
-
-
-
-
-
-
-    
+    SDCard sd_card;
+    SDCardTaskParams sdcard_task_params {
+        .sd_card = &sd_card,
+        .sdcard_queue = sdcard_queue
+    };
+    constexpr UBaseType_t WRITE_TO_SDCARD_TASK_PRIORITY = tskIDLE_PRIORITY + 2UL;
+    constexpr configSTACK_DEPTH_TYPE WRITE_TO_SDCARD_TASK_STACK_SIZE = 4096;
 
     //xTaskCreate(ds3231_setup_task, "RTC Setup", 1024, (void*)&ds3231, tskIDLE_PRIORITY + 2, nullptr);
     xTaskCreate(ds3231_task, "DS3231 Task", DS3231_TASK_STACK_SIZE, (void*)&ds3231_task_params, DS3231_TASK_PRIORITY, nullptr);
@@ -331,10 +309,11 @@ int main( void )
 
     xTaskCreate(uart_send_task, "UartSendTask", UART_SEND_TASK_STACK_SIZE, (void*)&uart_task_params, UART_SEND_TASK_PRIORITY, nullptr);
 
+    xTaskCreate(write_to_sdcard_task, "WriteToSDCardTask", WRITE_TO_SDCARD_TASK_STACK_SIZE, (void*)&sdcard_task_params, WRITE_TO_SDCARD_TASK_PRIORITY, nullptr);
+
     xTaskCreate(rain_tipping_bucket_task, "RainTippingBucketTask", 512, nullptr, RAIN_TASK_PRIORITY, &rain_tipping_bucket_task_handle);
     xTaskCreate(wind_speed_monitor_task, "WindSpeedMonitorTask", 512, (void*)&wind_speed_monitor, WIND_SPEED_MONITOR_TASK_PRIORITY, &wind_speed_monitor_task_handle);
     xTaskCreate(wind_direction_monitor_task, "WindDirectionMonitorTask", 512, (void*)&wind_direction_monitor, WIND_DIRECTION_MONITOR_TASK_PRIORITY, nullptr);
-    xTaskCreate(write_to_sdcard_task, "WriteToSDCardTask", 4096, (void*)&sd_card, SDCARD_TASK_PRIORITY, nullptr);
 
     vTaskStartScheduler();
 

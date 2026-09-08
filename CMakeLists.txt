@@ -43,6 +43,7 @@ add_executable(${PROJECT}
     src/tasks/veml7700-tasks.cpp
     src/tasks/ds3231-tasks.cpp
     src/tasks/uart-tasks.cpp
+    src/tasks/sdcard-tasks.cpp
 )
 
 target_include_directories(${PROJECT} PRIVATE
