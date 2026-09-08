@@ -19,8 +19,9 @@
 
 #include "tasks/bme280-tasks.hpp"
 #include "tasks/veml7700-tasks.hpp"
+#include "tasks/ds3231-tasks.hpp"
 
-#include "DS3231.h"
+
 #include "UartComms.hpp"
 #include "sdcard.h"
 
@@ -30,13 +31,7 @@
  */
 #define UART_SEND_DELAY_MS 10000
 
-#define DS3231_TASK_PRIORITY (tskIDLE_PRIORITY + 2UL)
-namespace ds3231_config {
-    inline constexpr i2c_inst_t* I2C_INSTANCE = i2c0;
-    inline constexpr uint8_t ADDRESS = 0x68;
-    inline constexpr uint SDA = 8;
-    inline constexpr uint SCL = 9;
-}
+
 
 
 #define UART_SEND_TASK_PRIORITY (tskIDLE_PRIORITY + 2UL)
@@ -200,89 +195,6 @@ void write_to_sdcard_task(void* pvParameters) {
     }
 }
 
-void ds3231_task(void* pvParameters) {
-    DS3231 *pDS3231 = static_cast<DS3231 *>(pvParameters);
-
-    struct tm time;
-
-    while (true) {
-        if (xSemaphoreTake(i2c_mutex, portMAX_DELAY)) {
-            bool sensor_read_success = pDS3231->readTime(time);
-
-            xSemaphoreGive(i2c_mutex);
-
-            if (sensor_read_success) {
-                time_t timestamp = mktime(&time);
-
-                char dateTime[20];
-
-                snprintf(dateTime,
-                    sizeof(dateTime),
-                    "%02d/%02d/%04d %02d:%02d:%02d",
-                    time.tm_mday,
-                    time.tm_mon + 1,
-                    time.tm_year + 1900,
-                    time.tm_hour,
-                    time.tm_min,
-                    time.tm_sec
-                );
-
-                if (xSemaphoreTake(weather_data_mutex, portMAX_DELAY)) {
-                    weather_data.timestamp = static_cast<uint32_t>(timestamp);
-
-                    std::strncpy(weather_data.dateTime, dateTime, sizeof(weather_data.dateTime) - 1);
-
-                    weather_data.validSensors |= SENSOR_VALID_DS3231;
-
-                    xSemaphoreGive(weather_data_mutex);
-
-                    xEventGroupSetBits(weather_ready_events, DS3231_READY);
-                }
-
-                // printf("Date: %02d/%02d/%04d Time: %02d:%02d:%02d timestamp=%lu\n",
-                //     time.tm_mday,
-                //     time.tm_mon + 1,
-                //     time.tm_year + 1900,
-                //     time.tm_hour,
-                //     time.tm_min,
-                //     time.tm_sec,
-                //     static_cast<unsigned long>(timestamp)
-                // );
-            }
-        }
-        else {
-            printf("Failed to read time\n");
-        }
-
-        vTaskDelay(1000);
-    }
-}
-
-// void ds3231_setup_task(void* pvParameters) {
-//     DS3231 *pDS3231 = static_cast<DS3231 *>(pvParameters);
-
-//     struct tm buildTime = {
-//         .tm_sec = 0,
-//         .tm_min = 30,
-//         .tm_hour = 14,
-//         .tm_mday = 25,
-//         .tm_mon = 12 - 1,        // Months since January, so January = 0
-//         .tm_year = 2026 - 1900,  // Years since 1900
-//         .tm_wday = 2,            // Optional: 0 = Sunday ... 6 = Saturday
-//     };
-
-//     if (pDS3231->setTime(buildTime)) {
-//         printf("RTC time set to %04d-%02d-%02d %02d:%02d:%02d\n",
-//                buildTime.tm_year + 1900, buildTime.tm_mon + 1, buildTime.tm_mday,
-//                buildTime.tm_hour, buildTime.tm_min, buildTime.tm_sec);
-//     }
-//     else {
-//         printf("Failed to set RTC time\n");
-//     }
-
-//     vTaskDelete(NULL); // Self-terminate
-// }
-
 void uart_send_task(void* params) {
     UartComms *pUartComms = static_cast<UartComms *>(params);
 
@@ -429,8 +341,21 @@ int main( void )
     constexpr UBaseType_t VEML7700_TASK_PRIORITY = tskIDLE_PRIORITY + 2UL;
     constexpr configSTACK_DEPTH_TYPE VEML7700_TASK_STACK_SIZE = 512;
 
+    DS3231 ds3231(i2c0, ds3231_config::ADDRESS);
+    DS3231TaskParams ds3231_task_params {
+        .sensor = &ds3231,
+        .weather_data = &weather_data,
+        .i2c_mutex = i2c_mutex,
+        .weather_data_mutex = weather_data_mutex,
+        .valid_sensor_bit = SENSOR_VALID_DS3231,
+        .ready_events = weather_ready_events,
+        .ready_bit = DS3231_READY
+    };
+    constexpr UBaseType_t DS3231_TASK_PRIORITY = tskIDLE_PRIORITY + 2UL;
+    constexpr configSTACK_DEPTH_TYPE DS3231_TASK_STACK_SIZE = 2048;
 
-    DS3231 ds3231(ds3231_config::I2C_INSTANCE, ds3231_config::ADDRESS);
+
+    
 
     
 
@@ -454,7 +379,7 @@ int main( void )
     sdcard_queue = xQueueCreate(8, sizeof(SDCardMessage));
 
     //xTaskCreate(ds3231_setup_task, "RTC Setup", 1024, (void*)&ds3231, tskIDLE_PRIORITY + 2, nullptr);
-    xTaskCreate(ds3231_task, "DS3231 Task", 2048, (void*)&ds3231, DS3231_TASK_PRIORITY, nullptr);
+    xTaskCreate(ds3231_task, "DS3231 Task", DS3231_TASK_STACK_SIZE, (void*)&ds3231_task_params, DS3231_TASK_PRIORITY, nullptr);
 
     xTaskCreate(bme280_task, "BME280Task", BME280_TASK_STACK_SIZE, (void*)&bme280_task_params, BME280_TASK_PRIORITY, nullptr);
 
