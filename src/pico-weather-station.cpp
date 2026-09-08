@@ -30,8 +30,9 @@
  */
 #define UART_SEND_DELAY_MS 10000
 
-// The rain tipping bucket ISR will notify this task when the bucket tips
+// The global ISR will notify these tasks when the bucket tips or anemometer pulses
 TaskHandle_t rain_tipping_bucket_task_handle = nullptr;
+TaskHandle_t wind_speed_anemometer_pulse_task_handle = nullptr;
 
 // Stores the current weather data from all the sensors plus sensor statuses and date/time
 WeatherData weather_data;
@@ -82,16 +83,18 @@ WindDirectionMonitor wind_direction_monitor (
 
 // The ISR is global so keep it here and orchestrate the services
 void wind_speed_and_rain_tipping_bucket_callback(uint gpio, __unused uint32_t events) {
+  BaseType_t higher_priority_task_woken = pdFALSE;
+
   if (gpio == rain_config::INTERRUPT_PIN) {
-      BaseType_t higher_priority_task_woken = pdFALSE;
       // Tell the rain tipping bucket task it needs to do something
       vTaskNotifyGiveFromISR(rain_tipping_bucket_task_handle, &higher_priority_task_woken);
-      portYIELD_FROM_ISR(higher_priority_task_woken);
   }
   else if (gpio == wind_speed_config::INTERRUPT_PIN) {
     // Anemometer so update the wind speed
-    wind_speed_monitor.onPulse();
+    vTaskNotifyGiveFromISR(wind_speed_anemometer_pulse_task_handle, &higher_priority_task_woken);
   }
+
+  portYIELD_FROM_ISR(higher_priority_task_woken);
 }
 
 /*
@@ -244,6 +247,7 @@ int main( void )
         .ready_bit_wind_speed = WIND_SPEED_READY,
         .ready_bit_wind_direction = WIND_DIRECTION_READY
     };
+    constexpr UBaseType_t WIND_SPEED_ANEMOMETER_PULSE_TASK_PRIORITY = tskIDLE_PRIORITY + 2UL;
     constexpr UBaseType_t WIND_SPEED_TASK_PRIORITY = tskIDLE_PRIORITY + 2UL;
     constexpr configSTACK_DEPTH_TYPE WIND_SPEED_TASK_STACK_SIZE = 512;
     constexpr UBaseType_t WIND_DIRECTION_TASK_PRIORITY = tskIDLE_PRIORITY + 2UL;
@@ -272,12 +276,17 @@ int main( void )
     xTaskCreate(write_to_sdcard_task, "WriteToSDCardTask", WRITE_TO_SDCARD_TASK_STACK_SIZE,
         (void*)&sdcard_task_params, WRITE_TO_SDCARD_TASK_PRIORITY, nullptr);
 
+    // Driven by ISR
+    xTaskCreate(wind_speed_anemometer_pulse_task, "WindSpeedAnemometerPulseTask", WIND_SPEED_TASK_STACK_SIZE,
+        (void*)&wind_task_params, WIND_SPEED_ANEMOMETER_PULSE_TASK_PRIORITY, &wind_speed_anemometer_pulse_task_handle);
+
     xTaskCreate(wind_speed_task, "WindSpeedMonitorTask", WIND_SPEED_TASK_STACK_SIZE,
         (void*)&wind_task_params, WIND_SPEED_TASK_PRIORITY, nullptr);
 
     xTaskCreate(wind_direction_task, "WindDirectionMonitorTask", WIND_DIRECTION_TASK_STACK_SIZE,
         (void*)&wind_task_params, WIND_DIRECTION_TASK_PRIORITY, nullptr);
 
+    // Driven by ISR
     xTaskCreate(rain_tipping_bucket_task, "RainTippingBucketTask", 512,
         (void*)&rain_task_params, RAIN_TASK_PRIORITY, &rain_tipping_bucket_task_handle);
 
