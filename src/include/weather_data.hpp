@@ -17,10 +17,18 @@ constexpr EventBits_t ALL_READY =
 
 constexpr uint8_t SENSOR_VALID_BME280         = 1u << 0;
 constexpr uint8_t SENSOR_VALID_VEML7700       = 1u << 1;
-constexpr uint8_t SENSOR_VALID_RAIN_COUNT     = 1u << 3;
-constexpr uint8_t SENSOR_VALID_WIND_SPEED     = 1u << 3;
 constexpr uint8_t SENSOR_VALID_WIND_DIRECTION = 1u << 2;
-constexpr uint8_t SENSOR_VALID_DS3231         = 1u << 4;
+constexpr uint8_t SENSOR_VALID_RAIN_COUNT     = 1u << 3;
+constexpr uint8_t SENSOR_VALID_WIND_SPEED     = 1u << 4;
+constexpr uint8_t SENSOR_VALID_DS3231         = 1u << 5;
+
+constexpr uint8_t ALL_SENSORS_VALID =
+    SENSOR_VALID_BME280 |
+    SENSOR_VALID_VEML7700 |
+    SENSOR_VALID_RAIN_COUNT |
+    SENSOR_VALID_WIND_SPEED |
+    SENSOR_VALID_WIND_DIRECTION |
+    SENSOR_VALID_DS3231;
 
 struct WeatherData {
     float temperature = 0.0f;
