@@ -22,10 +22,7 @@
 #include "tasks/ds3231-tasks.hpp"
 #include "tasks/uart-tasks.hpp"
 #include "tasks/sdcard-tasks.hpp"
-
-
-
-
+#include "tasks/wind-tasks.hpp"
 
 /*
  * Send to the LoRa broadcaster every 10s.
@@ -33,7 +30,26 @@
  */
 #define UART_SEND_DELAY_MS 10000
 
+namespace wind_speed_config {
+    inline constexpr uint INTERRUPT_PIN = 15;
+    inline constexpr bool CALLBACK_ENABLED = true;
+}
+WindSpeedMonitor wind_speed_monitor;
 
+namespace wind_direction_config {
+    inline spi_inst_t* SPI_INSTANCE = spi0;
+    inline constexpr uint CS_PIN = 17;
+    inline constexpr uint CLK_PIN = 18;
+    inline constexpr uint MOSI_PIN = 19;
+    inline constexpr uint MISO_PIN = 16;
+}
+WindDirectionMonitor wind_direction_monitor (
+    wind_direction_config::SPI_INSTANCE,
+    wind_direction_config::CS_PIN,
+    wind_direction_config::CLK_PIN,
+    wind_direction_config::MOSI_PIN,
+    wind_direction_config::MISO_PIN
+);
 
 
 
@@ -44,20 +60,9 @@ namespace rain_config {
     inline constexpr bool CALLBACK_ENABLED = true;
 }
 
-#define WIND_SPEED_MONITOR_TASK_PRIORITY (tskIDLE_PRIORITY + 2UL)
-namespace wind_speed_config {
-    inline constexpr uint INTERRUPT_PIN = 15;
-    inline constexpr bool CALLBACK_ENABLED = true;
-}
 
-#define WIND_DIRECTION_MONITOR_TASK_PRIORITY (tskIDLE_PRIORITY + 2UL)
-namespace wind_direction_config {
-    inline spi_inst_t* SPI_INSTANCE = spi0;
-    inline constexpr uint CS_PIN = 17;
-    inline constexpr uint CLK_PIN = 18;
-    inline constexpr uint MOSI_PIN = 19;
-    inline constexpr uint MISO_PIN = 16;
-}
+
+
 
 // All the i2c sensors share the semaphore
 SemaphoreHandle_t i2c_mutex;
@@ -66,7 +71,7 @@ SemaphoreHandle_t uart_mutex;
 
 QueueHandle_t sdcard_queue;
 
-static WindSpeedMonitor wind_speed_monitor;
+
 
 EventGroupHandle_t weather_ready_events;
 
@@ -122,55 +127,6 @@ void rain_tipping_bucket_task(void *pvParameters) {
     }
 }
 
-void wind_speed_monitor_task(void* parameter) {
-    auto* pWind_speed_monitor = static_cast<WindSpeedMonitor*>(parameter);
-
-    TickType_t last_wake = xTaskGetTickCount();
-
-    for (;;) {
-        vTaskDelayUntil(&last_wake, pdMS_TO_TICKS(1000));
-
-        int32_t speed = pWind_speed_monitor->sample1s();
-
-        if (xSemaphoreTake(weather_data_mutex, portMAX_DELAY)) {
-            weather_data.windSpeed = pWind_speed_monitor->getRunningAverageMph() / 10.0f;
-            weather_data.windGust = pWind_speed_monitor->getCurrentMinuteMaxGustMph() / 10.0f;
-            weather_data.validSensors |= SENSOR_VALID_WIND_SPEED;
-            xSemaphoreGive(weather_data_mutex);
-            xEventGroupSetBits(weather_ready_events, WIND_SPEED_READY);
-        }
-
-        printf(
-            "Wind: %.1f mph, avg: %.1f mph, gust: %.1f mph\n",
-            speed / 10.0,
-            pWind_speed_monitor->getRunningAverageMph() / 10.0,
-            pWind_speed_monitor->getCurrentMinuteMaxGustMph() / 10.0);
-        }
-}
-
-void wind_direction_monitor_task(void* parameter) {
-    auto* pWind_direction_monitor = static_cast<WindDirectionMonitor*>(parameter);
-
-    while (true) {
-        auto wind_direction_data = pWind_direction_monitor->getWindDirection();
-
-        if (xSemaphoreTake(weather_data_mutex, portMAX_DELAY)) {
-            snprintf(weather_data.windDirectionName,
-                sizeof(weather_data.windDirectionName),
-                "%s",
-                wind_direction_data.name
-            );
-            weather_data.windDirectionDegrees = wind_direction_data.degrees;
-            weather_data.validSensors |= SENSOR_VALID_WIND_DIRECTION;
-
-            xSemaphoreGive(weather_data_mutex);
-
-            xEventGroupSetBits(weather_ready_events, WIND_DIRECTION_READY);
-        }
-
-        vTaskDelay(pdMS_TO_TICKS(1000));
-    }
-}
 
 
 
@@ -205,14 +161,6 @@ int main( void )
     gpio_set_irq_enabled_with_callback(wind_speed_config::INTERRUPT_PIN, GPIO_IRQ_EDGE_RISE,
         wind_speed_config::CALLBACK_ENABLED, wind_speed_and_rain_tipping_bucket_callback);
 
-    WindDirectionMonitor wind_direction_monitor(
-        wind_direction_config::SPI_INSTANCE,
-        wind_direction_config::CS_PIN,
-        wind_direction_config::CLK_PIN,
-        wind_direction_config::MOSI_PIN,
-        wind_direction_config::MISO_PIN
-    );
-    wind_direction_monitor.init();
     
 
 
@@ -300,6 +248,25 @@ int main( void )
     constexpr UBaseType_t WRITE_TO_SDCARD_TASK_PRIORITY = tskIDLE_PRIORITY + 2UL;
     constexpr configSTACK_DEPTH_TYPE WRITE_TO_SDCARD_TASK_STACK_SIZE = 4096;
 
+    wind_direction_monitor.init();
+    WindTaskParams wind_task_params {
+        .wind_speed_monitor = &wind_speed_monitor,
+        .wind_direction_monitor = &wind_direction_monitor,
+        .weather_data = &weather_data,
+        .weather_data_mutex = weather_data_mutex,
+        .valid_sensor_bit_wind_speed = SENSOR_VALID_WIND_DIRECTION,
+        .valid_sensor_bit_wind_direction = SENSOR_VALID_WIND_DIRECTION,
+        .ready_events = weather_ready_events,
+        .ready_bit_wind_speed = WIND_SPEED_READY,
+        .ready_bit_wind_direction = WIND_DIRECTION_READY
+    };
+    constexpr UBaseType_t WIND_SPEED_TASK_PRIORITY = tskIDLE_PRIORITY + 2UL;
+    constexpr configSTACK_DEPTH_TYPE WIND_SPEED_TASK_STACK_SIZE = 512;
+    constexpr UBaseType_t WIND_DIRECTION_TASK_PRIORITY = tskIDLE_PRIORITY + 2UL;
+    constexpr configSTACK_DEPTH_TYPE WIND_DIRECTION_TASK_STACK_SIZE = 512;
+
+
+
     //xTaskCreate(ds3231_setup_task, "RTC Setup", 1024, (void*)&ds3231, tskIDLE_PRIORITY + 2, nullptr);
     xTaskCreate(ds3231_task, "DS3231 Task", DS3231_TASK_STACK_SIZE, (void*)&ds3231_task_params, DS3231_TASK_PRIORITY, nullptr);
 
@@ -311,9 +278,13 @@ int main( void )
 
     xTaskCreate(write_to_sdcard_task, "WriteToSDCardTask", WRITE_TO_SDCARD_TASK_STACK_SIZE, (void*)&sdcard_task_params, WRITE_TO_SDCARD_TASK_PRIORITY, nullptr);
 
+    xTaskCreate(wind_speed_task, "WindSpeedMonitorTask", WIND_SPEED_TASK_STACK_SIZE, (void*)&wind_task_params, WIND_SPEED_TASK_PRIORITY, &wind_speed_monitor_task_handle);
+
+    xTaskCreate(wind_direction_task, "WindDirectionMonitorTask", WIND_DIRECTION_TASK_STACK_SIZE, (void*)&wind_task_params, WIND_DIRECTION_TASK_PRIORITY, nullptr);
+
+
+
     xTaskCreate(rain_tipping_bucket_task, "RainTippingBucketTask", 512, nullptr, RAIN_TASK_PRIORITY, &rain_tipping_bucket_task_handle);
-    xTaskCreate(wind_speed_monitor_task, "WindSpeedMonitorTask", 512, (void*)&wind_speed_monitor, WIND_SPEED_MONITOR_TASK_PRIORITY, &wind_speed_monitor_task_handle);
-    xTaskCreate(wind_direction_monitor_task, "WindDirectionMonitorTask", 512, (void*)&wind_direction_monitor, WIND_DIRECTION_MONITOR_TASK_PRIORITY, nullptr);
 
     vTaskStartScheduler();
 

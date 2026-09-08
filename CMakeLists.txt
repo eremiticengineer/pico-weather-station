@@ -44,6 +44,7 @@ add_executable(${PROJECT}
     src/tasks/ds3231-tasks.cpp
     src/tasks/uart-tasks.cpp
     src/tasks/sdcard-tasks.cpp
+    src/tasks/wind-tasks.cpp
 )
 
 target_include_directories(${PROJECT} PRIVATE
