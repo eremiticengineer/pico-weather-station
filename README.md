@@ -2,9 +2,21 @@
 
 Solar powered pico weather station with LoRa broadcast of weather data.
 
-work in progress...
+There are three modules in the system:
 
-## Cloning the project
+The main weather station that orchestrates sensors and sends the data over UART to the LoRa broadcaster.
+
+[pico-weather-station](https://github.com/eremiticengineer/pico-weather-station)
+
+The LoRa broadcaster which receives data over UART from the main station and sends it over LoRa 433Mhz.
+
+[pico-weather-station-lora-broadcaster](https://github.com/eremiticengineer/pico-weather-station-lora-broadcaster)
+
+The base station that receives LoRa messages from the station via the LoRa broadcaster and processes the sensor data.
+
+Pico weather station base station, a work in progress...
+
+## Cloning and building the project
 
 Clone the project with FreeRTOS and sensor submodules to get the pico functionality:
 
@@ -13,29 +25,8 @@ git clone https://github.com/eremiticengineer/pico-weather-station
 cd pico-weather-station
 git submodule update --init --progress --jobs 4
 git -C lib/FreeRTOS-Kernel submodule update --init --recursive --progress
-git -C lib/fmt submodule update --init --recursive --progress
 git -C lib/FreeRTOS-FAT-CLI-for-RPi-Pico submodule update --init --recursive --progress
-```
-
-## FreeRTOS-Kernal setup for new projects
-
-When creating a FreeRTOS project from scratch, clone the main branch into the project. The main branch at the moment has the necessary pico functionality:
-
-```
-git init
-git submodule add https://github.com/FreeRTOS/FreeRTOS-Kernel.git lib/FreeRTOS-Kernel
-git submodule add https://github.com/fmtlib/fmt lib/fmt
-git submodule update --init --recursive --progress
-git submodule add https://github.com/eremiticengineer/pico-bme280 lib/pico-bme280
-git submodule add https://github.com/eremiticengineer/pico-ds3231 lib/pico-ds3231
-git submodule add https://github.com/eremiticengineer/pico-uart-comms lib/pico-uart-comms
-git submodule add https://github.com/eremiticengineer/pico-sdcard lib/pico-sdcard
-git submodule add https://github.com/eremiticengineer/pico-veml7700 lib/pico-veml7700
-git submodule add https://github.com/carlk3/FreeRTOS-FAT-CLI-for-RPi-Pico lib/FreeRTOS-FAT-CLI-for-RPi-Pico
-git -C lib/pico-sdcard submodule update --init lib/FreeRTOS-FAT-CLI-for-RPi-Pico
-git submodule update --init --recursive --progress lib/FreeRTOS-FAT-CLI-for-RPi-Pico
-git add .gitmodules lib/FreeRTOS-Kernel
-git add .gitmodules lib/fmt
+./build_project pico|pico2
 ```
 
 ## FreeRTOSConfig.h
