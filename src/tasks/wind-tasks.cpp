@@ -1,5 +1,15 @@
 #include "wind-tasks.hpp"
 
+void wind_speed_anemometer_pulse_task(void *pvParameters) {
+    WindTaskParams* pParam = static_cast<WindTaskParams*>(pvParameters);
+
+    while (true) {
+        // Notification from global ISR callback
+        uint32_t pulses = ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+        pParam->wind_speed_monitor->addPulses(pulses);
+    }
+}
+
 void wind_speed_task(void* pvParameters) {
     WindTaskParams* pParam = static_cast<WindTaskParams*>(pvParameters);
 
