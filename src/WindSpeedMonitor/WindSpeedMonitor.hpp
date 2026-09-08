@@ -55,6 +55,13 @@ public:
         total_clicks_++;
     }
 
+    // Call from the wind sensor ISR via a task notification
+    // where pulses can accumulate before they are processed
+    // by the task
+    inline void addPulses(uint32_t pulses) {
+        total_clicks_ += pulses;
+    }
+
     // ---------------------------------------------------------
     // 1-second sampling
     // ---------------------------------------------------------
