@@ -18,11 +18,11 @@
 #include "WindDirectionMonitor.hpp"
 
 #include "tasks/bme280-tasks.hpp"
+#include "tasks/veml7700-tasks.hpp"
 
 #include "DS3231.h"
 #include "UartComms.hpp"
 #include "sdcard.h"
-#include "VEML7700.h"
 
 /*
  * Send to the LoRa broadcaster every 10s.
@@ -38,13 +38,6 @@ namespace ds3231_config {
     inline constexpr uint SCL = 9;
 }
 
-#define VEML7700_SEND_TASK_PRIORITY (tskIDLE_PRIORITY + 2UL)
-namespace veml770_config {
-    inline constexpr i2c_inst_t* I2C_INSTANCE = i2c0;
-    inline constexpr uint8_t ADDRESS = 0x10;
-    inline constexpr uint SDA = 8;
-    inline constexpr uint SCL = 9;
-}
 
 #define UART_SEND_TASK_PRIORITY (tskIDLE_PRIORITY + 2UL)
 namespace uart_config {
@@ -290,41 +283,6 @@ void ds3231_task(void* pvParameters) {
 //     vTaskDelete(NULL); // Self-terminate
 // }
 
-void veml7700_task(void *pvParameters) {
-    VEML7700 *pVEML7700 = static_cast<VEML7700 *>(pvParameters);
-
-    if (xSemaphoreTake(i2c_mutex, portMAX_DELAY)) {
-      if (!pVEML7700->begin()) {
-          xSemaphoreGive(i2c_mutex);
-          printf("VEML7700 init failed\n");
-          vTaskDelete(NULL);
-      }
-      xSemaphoreGive(i2c_mutex);
-    }
-
-    float luxValue;
-
-    while (true) {
-        if (xSemaphoreTake(i2c_mutex, portMAX_DELAY)) {
-            bool sensor_read_success = pVEML7700->readLux(luxValue);
-            if (sensor_read_success) {
-                if (xSemaphoreTake(weather_data_mutex, portMAX_DELAY)) {
-                    weather_data.lux = luxValue;
-                    weather_data.validSensors |= SENSOR_VALID_VEML7700;
-                    xSemaphoreGive(weather_data_mutex);
-                    xEventGroupSetBits(weather_ready_events, VEML7700_READY);
-                }
-            }
-            else {
-                printf("Failed to read lux\n");
-            }
-            xSemaphoreGive(i2c_mutex);
-        }
-        
-        vTaskDelay(pdMS_TO_TICKS(1000)); // 1s delay
-    }
-}
-
 void uart_send_task(void* params) {
     UartComms *pUartComms = static_cast<UartComms *>(params);
 
@@ -437,21 +395,44 @@ int main( void )
 
     BME280 bme280(i2c0, bme280_config::ADDRESS);
     BME280TaskParams bme280_task_params {
+        // The sensor for the task
         .sensor = &bme280,
+        // Where the task will store the data from the sensor
         .weather_data = &weather_data,
+        // To allow the task to take control of the i2c bus
         .i2c_mutex = i2c_mutex,
+        // To allow the task to take control of the struct
+        // that stores the global weather data across sensors
         .weather_data_mutex = weather_data_mutex,
+        // The sensor specific bit to set or clear
+        // depending on whether the sensor is working or not
         .valid_sensor_bit = SENSOR_VALID_BME280,
+        // The startup bit field that lets the uart comms wait
+        // for all sensors to take their first reading
         .ready_events = weather_ready_events,
+        // The sensor specific bit in the startup bit field
         .ready_bit = BME280_READY
     };
     constexpr UBaseType_t BME280_TASK_PRIORITY = tskIDLE_PRIORITY + 2UL;
     constexpr configSTACK_DEPTH_TYPE BME280_TASK_STACK_SIZE = 512;
 
+    VEML7700 veml770(i2c0, veml770_config::ADDRESS);
+    VEML7700TaskParams veml7700_task_params {
+        .sensor = &veml770,
+        .weather_data = &weather_data,
+        .i2c_mutex = i2c_mutex,
+        .weather_data_mutex = weather_data_mutex,
+        .valid_sensor_bit = SENSOR_VALID_VEML7700,
+        .ready_events = weather_ready_events,
+        .ready_bit = VEML7700_READY
+    };
+    constexpr UBaseType_t VEML7700_TASK_PRIORITY = tskIDLE_PRIORITY + 2UL;
+    constexpr configSTACK_DEPTH_TYPE VEML7700_TASK_STACK_SIZE = 512;
+
 
     DS3231 ds3231(ds3231_config::I2C_INSTANCE, ds3231_config::ADDRESS);
 
-    VEML7700 veml770(veml770_config::I2C_INSTANCE, veml770_config::ADDRESS);
+    
 
     UartComms uartComms(
         uart_config::UART_NUM,
@@ -477,7 +458,8 @@ int main( void )
 
     xTaskCreate(bme280_task, "BME280Task", BME280_TASK_STACK_SIZE, (void*)&bme280_task_params, BME280_TASK_PRIORITY, nullptr);
 
-    xTaskCreate(veml7700_task, "VEML7700Task", 512, (void*)&veml770, VEML7700_SEND_TASK_PRIORITY, nullptr);
+    xTaskCreate(veml7700_task, "VEML7700Task", VEML7700_TASK_STACK_SIZE, (void*)&veml7700_task_params, VEML7700_TASK_PRIORITY, nullptr);
+
     xTaskCreate(uart_send_task, "UartSendTask", 2048, (void*)&uartComms, UART_SEND_TASK_PRIORITY, nullptr);
     xTaskCreate(rain_tipping_bucket_task, "RainTippingBucketTask", 512, nullptr, RAIN_TASK_PRIORITY, &rain_tipping_bucket_task_handle);
     xTaskCreate(wind_speed_monitor_task, "WindSpeedMonitorTask", 512, (void*)&wind_speed_monitor, WIND_SPEED_MONITOR_TASK_PRIORITY, &wind_speed_monitor_task_handle);

@@ -40,6 +40,7 @@ include(
 add_executable(${PROJECT}
     src/pico-weather-station.cpp
     src/tasks/bme280-tasks.cpp
+    src/tasks/veml7700-tasks.cpp
 )
 
 target_include_directories(${PROJECT} PRIVATE
