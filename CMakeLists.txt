@@ -39,12 +39,15 @@ include(
 
 add_executable(${PROJECT}
     src/pico-weather-station.cpp
+    src/tasks/bme280-tasks.cpp
 )
 
 target_include_directories(${PROJECT} PRIVATE
     include/
+    src/include
     src/WindSpeedMonitor
     src/WindDirectionMonitor
+    src/tasks
 )
 
 add_subdirectory(

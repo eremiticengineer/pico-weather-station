@@ -12,10 +12,13 @@
 #include <ctime>
 #include <cstring>
 
+#include "weather_data.hpp"
+
 #include "WindSpeedMonitor.hpp"
 #include "WindDirectionMonitor.hpp"
 
-#include "BME280.h"
+#include "tasks/bme280-tasks.hpp"
+
 #include "DS3231.h"
 #include "UartComms.hpp"
 #include "sdcard.h"
@@ -31,19 +34,6 @@
 namespace ds3231_config {
     inline constexpr i2c_inst_t* I2C_INSTANCE = i2c0;
     inline constexpr uint8_t ADDRESS = 0x68;
-    inline constexpr uint SDA = 8;
-    inline constexpr uint SCL = 9;
-}
-
-#define BME280_TASK_PRIORITY (tskIDLE_PRIORITY + 2UL)
-namespace bme280_config {
-    inline constexpr i2c_inst_t* I2C_INSTANCE = i2c0;
-    //inline constexpr uint8_t ADDRESS = 0x76;
-    // https://www.waveshare.com/wiki/BME280_Environmental_Sensor
-    // Address chip select (default is high):
-    // When the voltage is high, the address is 0 x 77
-    // When the voltage is low, the address is: 0 x 76
-    inline constexpr uint8_t ADDRESS = 0x77;
     inline constexpr uint SDA = 8;
     inline constexpr uint SCL = 9;
 }
@@ -99,22 +89,10 @@ QueueHandle_t sdcard_queue;
 
 static WindSpeedMonitor wind_speed_monitor;
 
-// Startup for sensors to report readiness
 EventGroupHandle_t weather_ready_events;
-constexpr EventBits_t BME280_READY          = 1 << 0;
-constexpr EventBits_t VEML7700_READY        = 1 << 1;
-constexpr EventBits_t WIND_DIRECTION_READY  = 1 << 2;
-constexpr EventBits_t WIND_SPEED_READY      = 1 << 3;
-constexpr EventBits_t DS3231_READY          = 1 << 4;
-constexpr EventBits_t ALL_READY =
-    BME280_READY |
-    VEML7700_READY |
-    WIND_DIRECTION_READY |
-    WIND_SPEED_READY |
-    DS3231_READY;
 
 /*
- * Set the WeatherData.bootId so the base station knows how many
+ * Set the weather_data.bootId so the base station knows how many
  * rainTipsSinceBoot there are as this will reset to zero after
  * a reboot.
  */
@@ -136,41 +114,12 @@ uint32_t create_boot_id() {
     return value;
 }
 
-constexpr uint8_t SENSOR_VALID_BME280         = 1u << 0;
-constexpr uint8_t SENSOR_VALID_VEML7700       = 1u << 1;
-constexpr uint8_t SENSOR_VALID_RAIN_COUNT     = 1u << 3;
-constexpr uint8_t SENSOR_VALID_WIND_SPEED     = 1u << 3;
-constexpr uint8_t SENSOR_VALID_WIND_DIRECTION = 1u << 2;
-constexpr uint8_t SENSOR_VALID_DS3231         = 1u << 4;
-
-struct WeatherData {
-    float temperature = 0.0f;
-    float humidity = 0.0f;
-    float pressure = 0.0f;
-
-    float windSpeed = 0.0f;
-    float windGust = 0.0f;
-    char windDirectionName[4];
-    uint16_t windDirectionDegrees = 0;
-
-    float lux = 0.0f;
-
-    uint32_t rainTipsSinceBoot = 0;
-    uint32_t bootId = create_boot_id();
-
-    float batteryVoltage = 0.0f;
-
-    uint32_t timestamp = 0;
-
-    char dateTime[20] = "";
-
-    uint8_t validSensors;
-}; WeatherData weatherData;
-
 SemaphoreHandle_t weather_data_mutex;
 
 TaskHandle_t rain_tipping_bucket_task_handle = nullptr;
 TaskHandle_t wind_speed_monitor_task_handle = nullptr;
+
+WeatherData weather_data;
 
 void wind_speed_and_rain_tipping_bucket_callback(uint gpio, __unused uint32_t events) {
   if (gpio == rain_config::INTERRUPT_PIN) {
@@ -187,8 +136,8 @@ void rain_tipping_bucket_task(void *pvParameters) {
     while (true) {
         uint32_t pulses = ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
         if (xSemaphoreTake(weather_data_mutex, portMAX_DELAY)) {
-            weatherData.rainTipsSinceBoot++;
-            weatherData.validSensors |= SENSOR_VALID_RAIN_COUNT;
+            weather_data.rainTipsSinceBoot++;
+            weather_data.validSensors |= SENSOR_VALID_RAIN_COUNT;
             xSemaphoreGive(weather_data_mutex);
         }
     }
@@ -205,9 +154,9 @@ void wind_speed_monitor_task(void* parameter) {
         int32_t speed = pWind_speed_monitor->sample1s();
 
         if (xSemaphoreTake(weather_data_mutex, portMAX_DELAY)) {
-            weatherData.windSpeed = pWind_speed_monitor->getRunningAverageMph() / 10.0f;
-            weatherData.windGust = pWind_speed_monitor->getCurrentMinuteMaxGustMph() / 10.0f;
-            weatherData.validSensors |= SENSOR_VALID_WIND_SPEED;
+            weather_data.windSpeed = pWind_speed_monitor->getRunningAverageMph() / 10.0f;
+            weather_data.windGust = pWind_speed_monitor->getCurrentMinuteMaxGustMph() / 10.0f;
+            weather_data.validSensors |= SENSOR_VALID_WIND_SPEED;
             xSemaphoreGive(weather_data_mutex);
             xEventGroupSetBits(weather_ready_events, WIND_SPEED_READY);
         }
@@ -227,21 +176,18 @@ void wind_direction_monitor_task(void* parameter) {
         auto wind_direction_data = pWind_direction_monitor->getWindDirection();
 
         if (xSemaphoreTake(weather_data_mutex, portMAX_DELAY)) {
-            snprintf(weatherData.windDirectionName,
-                sizeof(weatherData.windDirectionName),
+            snprintf(weather_data.windDirectionName,
+                sizeof(weather_data.windDirectionName),
                 "%s",
                 wind_direction_data.name
             );
-            weatherData.windDirectionDegrees = wind_direction_data.degrees;
-            weatherData.validSensors |= SENSOR_VALID_WIND_DIRECTION;
+            weather_data.windDirectionDegrees = wind_direction_data.degrees;
+            weather_data.validSensors |= SENSOR_VALID_WIND_DIRECTION;
 
             xSemaphoreGive(weather_data_mutex);
 
             xEventGroupSetBits(weather_ready_events, WIND_DIRECTION_READY);
         }
-
-        // printf("Wind direction name = %s\n", wind_direction_data.name);
-        // printf("Wind direction degrees = %.1f\n", wind_direction_data.degrees);
 
         vTaskDelay(pdMS_TO_TICKS(1000));
     }
@@ -257,50 +203,7 @@ void write_to_sdcard_task(void* pvParameters) {
     {
         if (xQueueReceive(sdcard_queue, &message, portMAX_DELAY) == pdTRUE) {
             pSDCard->writeAfterInit(message.data);
-
-            printf("written to sdcard: '%s'\n", message.data);
         }
-    }
-}
-
-void bme280_task(void* pvParameters) {
-    BME280 *pBME280 = static_cast<BME280 *>(pvParameters);
-
-    if (xSemaphoreTake(i2c_mutex, portMAX_DELAY)) {
-        if (!pBME280->init()) {
-            printf("Failed to init BME280\n");
-            xSemaphoreGive(i2c_mutex);
-            vTaskDelete(NULL);
-        }
-        xSemaphoreGive(i2c_mutex);
-    }
-
-    float temperature;
-    float pressure;
-    float humidity;
-
-    while (true) {
-        if (xSemaphoreTake(i2c_mutex, portMAX_DELAY)) {
-            bool sensor_read_success = pBME280->readSensor(temperature, pressure, humidity);
-
-            xSemaphoreGive(i2c_mutex);
-
-            if (sensor_read_success) {
-                if (xSemaphoreTake(weather_data_mutex, portMAX_DELAY)) {
-                    weatherData.temperature = temperature;
-                    weatherData.pressure = pressure;
-                    weatherData.humidity = humidity;
-
-                    weatherData.validSensors |= SENSOR_VALID_BME280;
-
-                    xSemaphoreGive(weather_data_mutex);
-
-                    xEventGroupSetBits(weather_ready_events, BME280_READY);
-                }
-            }
-        }
-
-        vTaskDelay(pdMS_TO_TICKS(1000));
     }
 }
 
@@ -332,11 +235,11 @@ void ds3231_task(void* pvParameters) {
                 );
 
                 if (xSemaphoreTake(weather_data_mutex, portMAX_DELAY)) {
-                    weatherData.timestamp = static_cast<uint32_t>(timestamp);
+                    weather_data.timestamp = static_cast<uint32_t>(timestamp);
 
-                    std::strncpy(weatherData.dateTime, dateTime, sizeof(weatherData.dateTime) - 1);
+                    std::strncpy(weather_data.dateTime, dateTime, sizeof(weather_data.dateTime) - 1);
 
-                    weatherData.validSensors |= SENSOR_VALID_DS3231;
+                    weather_data.validSensors |= SENSOR_VALID_DS3231;
 
                     xSemaphoreGive(weather_data_mutex);
 
@@ -406,13 +309,11 @@ void veml7700_task(void *pvParameters) {
             bool sensor_read_success = pVEML7700->readLux(luxValue);
             if (sensor_read_success) {
                 if (xSemaphoreTake(weather_data_mutex, portMAX_DELAY)) {
-                    weatherData.lux = luxValue;
-                    weatherData.validSensors |= SENSOR_VALID_VEML7700;
+                    weather_data.lux = luxValue;
+                    weather_data.validSensors |= SENSOR_VALID_VEML7700;
                     xSemaphoreGive(weather_data_mutex);
                     xEventGroupSetBits(weather_ready_events, VEML7700_READY);
                 }
-
-                // printf("Lux: %.2f\n", luxValue);
             }
             else {
                 printf("Failed to read lux\n");
@@ -442,7 +343,7 @@ void uart_send_task(void* params) {
         std::string sdcard_message;
 
         if (xSemaphoreTake(weather_data_mutex, portMAX_DELAY)) {
-            snapshot = weatherData;
+            snapshot = weather_data;
 
             xSemaphoreGive(weather_data_mutex);
 
@@ -472,7 +373,7 @@ void uart_send_task(void* params) {
         if (xSemaphoreTake(uart_mutex, pdMS_TO_TICKS(100))) {
             pUartComms->send(lora_message);
 
-            printf("wrote '%s', length=%zu\n", lora_message.c_str(), lora_message.size());
+            printf("sent to uart '%s', length=%zu\n", lora_message.c_str(), lora_message.size());
 
             xSemaphoreGive(uart_mutex);
         }
@@ -493,17 +394,16 @@ int main( void )
 
     sleep_ms(2000);
 
-    SDCard sdcard;
+    weather_data.bootId = create_boot_id();
 
-    weather_data_mutex = xSemaphoreCreateMutex();
+    SDCard sd_card;
 
     // All the i2c sensors are on the same instance and same pins
-    i2c_init(bme280_config::I2C_INSTANCE, 100 * 1000);
-    gpio_set_function(bme280_config::SDA, GPIO_FUNC_I2C);
-    gpio_set_function(bme280_config::SCL, GPIO_FUNC_I2C);
-    gpio_pull_up(bme280_config::SDA);
-    gpio_pull_up(bme280_config::SCL);
-    i2c_mutex = xSemaphoreCreateMutex();
+    i2c_init(i2c0, 100 * 1000);
+    gpio_set_function(8, GPIO_FUNC_I2C);
+    gpio_set_function(9, GPIO_FUNC_I2C);
+    gpio_pull_up(8);
+    gpio_pull_up(9);
 
     // Rain tipping bucket interrupt
     gpio_init(rain_config::INTERRUPT_PIN);
@@ -528,7 +428,26 @@ int main( void )
     );
     wind_direction_monitor.init();
     
-    BME280 bme280(bme280_config::I2C_INSTANCE, bme280_config::ADDRESS);
+    // Make uart_send_task wait for the sensors to take their first reading
+    weather_ready_events = xEventGroupCreate();
+ 
+    weather_data_mutex = xSemaphoreCreateMutex();
+    i2c_mutex = xSemaphoreCreateMutex();
+    uart_mutex = xSemaphoreCreateMutex();
+
+    BME280 bme280(i2c0, bme280_config::ADDRESS);
+    BME280TaskParams bme280_task_params {
+        .sensor = &bme280,
+        .weather_data = &weather_data,
+        .i2c_mutex = i2c_mutex,
+        .weather_data_mutex = weather_data_mutex,
+        .valid_sensor_bit = SENSOR_VALID_BME280,
+        .ready_events = weather_ready_events,
+        .ready_bit = BME280_READY
+    };
+    constexpr UBaseType_t BME280_TASK_PRIORITY = tskIDLE_PRIORITY + 2UL;
+    constexpr configSTACK_DEPTH_TYPE BME280_TASK_STACK_SIZE = 512;
+
 
     DS3231 ds3231(ds3231_config::I2C_INSTANCE, ds3231_config::ADDRESS);
 
@@ -541,22 +460,29 @@ int main( void )
         uart_config::RX
     );
     uartComms.init();
-    uart_mutex = xSemaphoreCreateMutex();
+
+
+
+
+
+
+
+
+
 
     sdcard_queue = xQueueCreate(8, sizeof(SDCardMessage));
 
-    // Make uart_send_task wait for the sensors to take their first reading
-    weather_ready_events = xEventGroupCreate();
-
     //xTaskCreate(ds3231_setup_task, "RTC Setup", 1024, (void*)&ds3231, tskIDLE_PRIORITY + 2, nullptr);
     xTaskCreate(ds3231_task, "DS3231 Task", 2048, (void*)&ds3231, DS3231_TASK_PRIORITY, nullptr);
-    xTaskCreate(bme280_task, "BME280Task", 512, (void*)&bme280, BME280_TASK_PRIORITY, nullptr);
+
+    xTaskCreate(bme280_task, "BME280Task", BME280_TASK_STACK_SIZE, (void*)&bme280_task_params, BME280_TASK_PRIORITY, nullptr);
+
     xTaskCreate(veml7700_task, "VEML7700Task", 512, (void*)&veml770, VEML7700_SEND_TASK_PRIORITY, nullptr);
     xTaskCreate(uart_send_task, "UartSendTask", 2048, (void*)&uartComms, UART_SEND_TASK_PRIORITY, nullptr);
     xTaskCreate(rain_tipping_bucket_task, "RainTippingBucketTask", 512, nullptr, RAIN_TASK_PRIORITY, &rain_tipping_bucket_task_handle);
     xTaskCreate(wind_speed_monitor_task, "WindSpeedMonitorTask", 512, (void*)&wind_speed_monitor, WIND_SPEED_MONITOR_TASK_PRIORITY, &wind_speed_monitor_task_handle);
     xTaskCreate(wind_direction_monitor_task, "WindDirectionMonitorTask", 512, (void*)&wind_direction_monitor, WIND_DIRECTION_MONITOR_TASK_PRIORITY, nullptr);
-    xTaskCreate(write_to_sdcard_task, "WriteToSDCardTask", 4096, (void*)&sdcard, SDCARD_TASK_PRIORITY, nullptr);
+    xTaskCreate(write_to_sdcard_task, "WriteToSDCardTask", 4096, (void*)&sd_card, SDCARD_TASK_PRIORITY, nullptr);
 
     vTaskStartScheduler();
 
