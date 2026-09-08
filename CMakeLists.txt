@@ -42,6 +42,7 @@ add_executable(${PROJECT}
     src/tasks/bme280-tasks.cpp
     src/tasks/veml7700-tasks.cpp
     src/tasks/ds3231-tasks.cpp
+    src/tasks/uart-tasks.cpp
 )
 
 target_include_directories(${PROJECT} PRIVATE

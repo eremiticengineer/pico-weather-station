@@ -20,9 +20,10 @@
 #include "tasks/bme280-tasks.hpp"
 #include "tasks/veml7700-tasks.hpp"
 #include "tasks/ds3231-tasks.hpp"
+#include "tasks/uart-tasks.hpp"
 
 
-#include "UartComms.hpp"
+
 #include "sdcard.h"
 
 /*
@@ -34,13 +35,7 @@
 
 
 
-#define UART_SEND_TASK_PRIORITY (tskIDLE_PRIORITY + 2UL)
-namespace uart_config {
-    inline uart_inst_t* const UART_NUM = uart1;
-    inline constexpr uint BAUD = 115200;
-    inline constexpr uint TX = 4;
-    inline constexpr uint RX = 5;
-}
+
 
 #define RAIN_TASK_PRIORITY (tskIDLE_PRIORITY + 2UL)
 namespace rain_config {
@@ -69,9 +64,6 @@ namespace wind_direction_config {
 SemaphoreHandle_t i2c_mutex;
 SemaphoreHandle_t uart_mutex;
 
-struct SDCardMessage {
-    char data[256];
-};
 
 QueueHandle_t sdcard_queue;
 
@@ -195,68 +187,6 @@ void write_to_sdcard_task(void* pvParameters) {
     }
 }
 
-void uart_send_task(void* params) {
-    UartComms *pUartComms = static_cast<UartComms *>(params);
-
-    // Wait for the sensors to take their first reading
-    xEventGroupWaitBits(
-        weather_ready_events,
-        ALL_READY,
-        pdFALSE,
-        pdTRUE,
-        pdMS_TO_TICKS(5000)
-    );    
-
-    while (true) {
-        WeatherData snapshot;
-        std::string lora_message;
-        std::string sdcard_message;
-
-        if (xSemaphoreTake(weather_data_mutex, portMAX_DELAY)) {
-            snapshot = weather_data;
-
-            xSemaphoreGive(weather_data_mutex);
-
-            // CSV for the LoRa broadcaster and sdcard
-            char buffer[256];
-            snprintf(
-                buffer,
-                sizeof(buffer),
-                "%u,%u,%.1f,%.1f,%.1f,%.1f,%.1f,%s,%u,%.1f,%u,%.2f,%u",
-                static_cast<unsigned>(snapshot.timestamp),
-                snapshot.bootId,
-                snapshot.temperature,
-                snapshot.pressure,
-                snapshot.humidity,
-                snapshot.windSpeed,
-                snapshot.windGust,
-                snapshot.windDirectionName,
-                static_cast<unsigned>(snapshot.windDirectionDegrees),
-                snapshot.lux,
-                static_cast<unsigned>(snapshot.rainTipsSinceBoot),
-                snapshot.batteryVoltage,
-                static_cast<unsigned>(snapshot.validSensors)
-            );
-            lora_message = buffer;
-        }
-
-        if (xSemaphoreTake(uart_mutex, pdMS_TO_TICKS(100))) {
-            pUartComms->send(lora_message);
-
-            printf("sent to uart '%s', length=%zu\n", lora_message.c_str(), lora_message.size());
-
-            xSemaphoreGive(uart_mutex);
-        }
-
-        SDCardMessage sdcard_message_to_send {};
-
-        std::strncpy(sdcard_message_to_send.data, lora_message.c_str(), sizeof(sdcard_message_to_send.data) - 1);
-
-        xQueueSend(sdcard_queue, &sdcard_message_to_send, portMAX_DELAY);
-
-        vTaskDelay(pdMS_TO_TICKS(UART_SEND_DELAY_MS));
-    }
-}
 
 int main( void )
 {
@@ -298,13 +228,17 @@ int main( void )
     );
     wind_direction_monitor.init();
     
+
+
+
+
+
     // Make uart_send_task wait for the sensors to take their first reading
     weather_ready_events = xEventGroupCreate();
  
     weather_data_mutex = xSemaphoreCreateMutex();
     i2c_mutex = xSemaphoreCreateMutex();
-    uart_mutex = xSemaphoreCreateMutex();
-
+    
     BME280 bme280(i2c0, bme280_config::ADDRESS);
     BME280TaskParams bme280_task_params {
         // The sensor for the task
@@ -354,29 +288,39 @@ int main( void )
     constexpr UBaseType_t DS3231_TASK_PRIORITY = tskIDLE_PRIORITY + 2UL;
     constexpr configSTACK_DEPTH_TYPE DS3231_TASK_STACK_SIZE = 2048;
 
-
-    
-
-    
-
-    UartComms uartComms(
-        uart_config::UART_NUM,
-        uart_config::BAUD,
-        uart_config::TX,
-        uart_config::RX
-    );
+    uint uart_tx_pin = 4;
+    uint uart_rx_pin = 5;
+    UartComms uartComms(uart1, 115200, uart_tx_pin, uart_rx_pin);
     uartComms.init();
-
-
-
-
-
-
-
-
-
-
+    uart_mutex = xSemaphoreCreateMutex();
     sdcard_queue = xQueueCreate(8, sizeof(SDCardMessage));
+    UARTTaskParams uart_task_params {
+        .uart = &uartComms,
+        .weather_data = &weather_data,
+        .weather_data_mutex = weather_data_mutex,
+        .uart_mutex = uart_mutex,
+        .sdcard_queue = sdcard_queue,
+        .ready_events = weather_ready_events,
+        .send_delay_ms = UART_SEND_DELAY_MS
+    };
+    constexpr UBaseType_t UART_SEND_TASK_PRIORITY = tskIDLE_PRIORITY + 2UL;
+    constexpr configSTACK_DEPTH_TYPE UART_SEND_TASK_STACK_SIZE = 2048;
+
+    
+
+    
+
+
+
+
+
+
+
+
+
+
+
+    
 
     //xTaskCreate(ds3231_setup_task, "RTC Setup", 1024, (void*)&ds3231, tskIDLE_PRIORITY + 2, nullptr);
     xTaskCreate(ds3231_task, "DS3231 Task", DS3231_TASK_STACK_SIZE, (void*)&ds3231_task_params, DS3231_TASK_PRIORITY, nullptr);
@@ -385,7 +329,8 @@ int main( void )
 
     xTaskCreate(veml7700_task, "VEML7700Task", VEML7700_TASK_STACK_SIZE, (void*)&veml7700_task_params, VEML7700_TASK_PRIORITY, nullptr);
 
-    xTaskCreate(uart_send_task, "UartSendTask", 2048, (void*)&uartComms, UART_SEND_TASK_PRIORITY, nullptr);
+    xTaskCreate(uart_send_task, "UartSendTask", UART_SEND_TASK_STACK_SIZE, (void*)&uart_task_params, UART_SEND_TASK_PRIORITY, nullptr);
+
     xTaskCreate(rain_tipping_bucket_task, "RainTippingBucketTask", 512, nullptr, RAIN_TASK_PRIORITY, &rain_tipping_bucket_task_handle);
     xTaskCreate(wind_speed_monitor_task, "WindSpeedMonitorTask", 512, (void*)&wind_speed_monitor, WIND_SPEED_MONITOR_TASK_PRIORITY, &wind_speed_monitor_task_handle);
     xTaskCreate(wind_direction_monitor_task, "WindDirectionMonitorTask", 512, (void*)&wind_direction_monitor, WIND_DIRECTION_MONITOR_TASK_PRIORITY, nullptr);
