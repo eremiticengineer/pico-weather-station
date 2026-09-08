@@ -4,7 +4,7 @@ void rain_tipping_bucket_task(void *pvParameters) {
     RainTaskParams* pParam = static_cast<RainTaskParams*>(pvParameters);
 
     while (true) {
-        // Notification from rain tipping bucket ISR callback
+        // Notification from global ISR callback
         uint32_t pulses = ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
 
         if (xSemaphoreTake(pParam->weather_data_mutex, portMAX_DELAY)) {
