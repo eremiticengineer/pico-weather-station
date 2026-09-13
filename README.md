@@ -14,7 +14,7 @@ The LoRa broadcaster which receives data over UART from the main station and sen
 
 The base station that receives LoRa messages from the station via the LoRa broadcaster and processes the sensor data.
 
-Pico weather station base station, a work in progress...
+[pico-weather-base-station](https://github.com/eremiticengineer/pico-weather-base-station)
 
 ## Cloning and building the project
 
