@@ -47,3 +47,7 @@ pico-examples/freertos/FreeRTOSConfig_examples_common.h
 
 * [Task priorites](https://www.freertos.org/Documentation/02-Kernel/02-Kernel-features/01-Tasks-and-co-routines/03-Task-priorities)
 * [uxTaskGetStackHighWaterMark](https://www.freertos.org/Documentation/02-Kernel/04-API-references/03-Task-utilities/04-uxTaskGetStackHighWaterMark)
+
+## License
+
+This project is licensed under the MIT License. See [LICENSE](LICENSE) for details.
