@@ -25,6 +25,7 @@ void veml7700_task(void *pvParameters) {
                     pParams->weather_data->validSensors |= pParams->valid_sensor_bit;
                     xSemaphoreGive(pParams->weather_data_mutex);
                     xEventGroupSetBits(pParams->ready_events, pParams->ready_bit);
+                    xEventGroupSetBits(pParams->watchdog_events, pParams->watchdog_bit);
                 }
             }
             else {

@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include "pico/stdlib.h"
 #include "hardware/structs/rosc.h"
+#include "hardware/watchdog.h"
 
 #include "FreeRTOS.h"
 #include "task.h"
@@ -23,6 +24,7 @@
 #include "tasks/sdcard-tasks.hpp"
 #include "tasks/wind-tasks.hpp"
 #include "tasks/rain-tasks.hpp"
+#include "tasks/watchdog-tasks.hpp"
 
 /*
  * Send to the LoRa broadcaster every 10s.
@@ -51,6 +53,9 @@ QueueHandle_t sdcard_queue;
 
 // To allow the uart task to wait until the sensors have taken their first reading
 EventGroupHandle_t weather_ready_events;
+
+// To allow the sensors to report they're still going string
+EventGroupHandle_t watchdog_events;
 
 // Rain tipping bucket IRQ
 namespace rain_config {
@@ -86,8 +91,8 @@ void wind_speed_and_rain_tipping_bucket_callback(uint gpio, __unused uint32_t ev
   BaseType_t higher_priority_task_woken = pdFALSE;
 
   if (gpio == rain_config::INTERRUPT_PIN) {
-      // Tell the rain tipping bucket task it needs to do something
-      vTaskNotifyGiveFromISR(rain_tipping_bucket_task_handle, &higher_priority_task_woken);
+    // Tell the rain tipping bucket task it needs to do something
+    vTaskNotifyGiveFromISR(rain_tipping_bucket_task_handle, &higher_priority_task_woken);
   }
   else if (gpio == wind_speed_config::INTERRUPT_PIN) {
     // Anemometer so update the wind speed
@@ -124,6 +129,13 @@ int main( void )
 {
     stdio_init_all();
 
+    if (watchdog_enable_caused_reboot()) {
+        printf("Watchdog reboot detected.\n");
+    }
+    else {
+        printf("Normal boot detected.\n");
+    }
+
     // Let the host machine catch up
     sleep_ms(2000);
 
@@ -153,6 +165,9 @@ int main( void )
 
     // Make uart_send_task wait for the sensors to take their first reading
     weather_ready_events = xEventGroupCreate();
+
+    // Let the sensors report they're still working
+    watchdog_events = xEventGroupCreate();
  
     // Allow exclusive access to the current set of weather measurements
     weather_data_mutex = xSemaphoreCreateMutex();
@@ -178,7 +193,11 @@ int main( void )
         // for all sensors to take their first reading
         .ready_events = weather_ready_events,
         // The sensor specific bit in the startup bit field
-        .ready_bit = BME280_READY
+        .ready_bit = BME280_READY,
+        // The sensor will set its flag to help feed the watchdog
+        .watchdog_events = watchdog_events,
+        // The sensor specific bit in the watchdog bit field
+        .watchdog_bit = WATCHDOG_BME280
     };
     constexpr UBaseType_t BME280_TASK_PRIORITY = tskIDLE_PRIORITY + 2UL;
     constexpr configSTACK_DEPTH_TYPE BME280_TASK_STACK_SIZE = 512;
@@ -191,7 +210,9 @@ int main( void )
         .weather_data_mutex = weather_data_mutex,
         .valid_sensor_bit = SENSOR_VALID_VEML7700,
         .ready_events = weather_ready_events,
-        .ready_bit = VEML7700_READY
+        .ready_bit = VEML7700_READY,
+        .watchdog_events = watchdog_events,
+        .watchdog_bit = WATCHDOG_VEML7700
     };
     constexpr UBaseType_t VEML7700_TASK_PRIORITY = tskIDLE_PRIORITY + 2UL;
     constexpr configSTACK_DEPTH_TYPE VEML7700_TASK_STACK_SIZE = 512;
@@ -204,7 +225,9 @@ int main( void )
         .weather_data_mutex = weather_data_mutex,
         .valid_sensor_bit = SENSOR_VALID_DS3231,
         .ready_events = weather_ready_events,
-        .ready_bit = DS3231_READY
+        .ready_bit = DS3231_READY,
+        .watchdog_events = watchdog_events,
+        .watchdog_bit = WATCHDOG_DS3231
     };
     constexpr UBaseType_t DS3231_TASK_PRIORITY = tskIDLE_PRIORITY + 2UL;
     constexpr configSTACK_DEPTH_TYPE DS3231_TASK_STACK_SIZE = 2048;
@@ -245,7 +268,9 @@ int main( void )
         .valid_sensor_bit_wind_direction = SENSOR_VALID_WIND_DIRECTION,
         .ready_events = weather_ready_events,
         .ready_bit_wind_speed = WIND_SPEED_READY,
-        .ready_bit_wind_direction = WIND_DIRECTION_READY
+        .ready_bit_wind_direction = WIND_DIRECTION_READY,
+        .watchdog_events = watchdog_events,
+        .watchdog_bit = WATCHDOG_WIND_SPEED
     };
     constexpr UBaseType_t WIND_SPEED_ANEMOMETER_PULSE_TASK_PRIORITY = tskIDLE_PRIORITY + 2UL;
     constexpr UBaseType_t WIND_SPEED_TASK_PRIORITY = tskIDLE_PRIORITY + 2UL;
@@ -259,6 +284,15 @@ int main( void )
         .valid_sensor_bit = SENSOR_VALID_RAIN_COUNT
     };
     constexpr UBaseType_t RAIN_TASK_PRIORITY = tskIDLE_PRIORITY + 2UL;
+    constexpr configSTACK_DEPTH_TYPE RAIN_TASK_STACkSIZE = 512;
+
+    // 10s watchdog timer
+    WatchdogTaskParams watchdog_params{
+        .watchdog_events = watchdog_events
+    };
+    constexpr UBaseType_t WATCHDOG_TASK_PRIORITY = tskIDLE_PRIORITY + 2UL;
+    constexpr configSTACK_DEPTH_TYPE WATCHDOG_TASK_STACK_SIZE = 512;
+    watchdog_enable(10000, true);
 
     //xTaskCreate(ds3231_setup_task, "RTC Setup", 1024, (void*)&ds3231, tskIDLE_PRIORITY + 2, nullptr);
     xTaskCreate(ds3231_task, "DS3231 Task", DS3231_TASK_STACK_SIZE,
@@ -287,8 +321,11 @@ int main( void )
         (void*)&wind_task_params, WIND_DIRECTION_TASK_PRIORITY, nullptr);
 
     // Driven by ISR
-    xTaskCreate(rain_tipping_bucket_task, "RainTippingBucketTask", 512,
+    xTaskCreate(rain_tipping_bucket_task, "RainTippingBucketTask", RAIN_TASK_STACkSIZE,
         (void*)&rain_task_params, RAIN_TASK_PRIORITY, &rain_tipping_bucket_task_handle);
+
+    xTaskCreate(watchdog_task, "WatchdogTask", WATCHDOG_TASK_STACK_SIZE,
+        (void*)&watchdog_params, WATCHDOG_TASK_PRIORITY, nullptr);
 
     vTaskStartScheduler();
 

@@ -32,6 +32,8 @@ void bme280_task(void* pvParameters) {
                     xSemaphoreGive(pParams->weather_data_mutex);
 
                     xEventGroupSetBits(pParams->ready_events, pParams->ready_bit);
+
+                    xEventGroupSetBits(pParams->watchdog_events, pParams->watchdog_bit);
                 }
             }
             else {

@@ -37,6 +37,8 @@ void ds3231_task(void* pvParameters) {
                     xSemaphoreGive(pParams->weather_data_mutex);
 
                     xEventGroupSetBits(pParams->ready_events, pParams->ready_bit);
+
+                    xEventGroupSetBits(pParams->watchdog_events, pParams->watchdog_bit);
                 }
 
                 // printf("Date: %02d/%02d/%04d Time: %02d:%02d:%02d timestamp=%lu\n",

@@ -22,6 +22,8 @@ struct WindTaskParams {
     EventGroupHandle_t ready_events;
     EventBits_t ready_bit_wind_speed;
     EventBits_t ready_bit_wind_direction;
+    EventGroupHandle_t watchdog_events;
+    EventBits_t watchdog_bit;
 };
 
 void wind_speed_anemometer_pulse_task(void *pvParameters);

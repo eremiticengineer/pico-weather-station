@@ -46,6 +46,7 @@ add_executable(${PROJECT}
     src/tasks/sdcard-tasks.cpp
     src/tasks/wind-tasks.cpp
     src/tasks/rain-tasks.cpp
+    src/tasks/watchdog-tasks.cpp
 )
 
 target_include_directories(${PROJECT} PRIVATE

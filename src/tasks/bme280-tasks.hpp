@@ -28,6 +28,8 @@ struct BME280TaskParams {
     uint32_t valid_sensor_bit;
     EventGroupHandle_t ready_events;
     EventBits_t ready_bit;
+    EventGroupHandle_t watchdog_events;
+    EventBits_t watchdog_bit;
 };
 
 void bme280_task(void *pvParameters);

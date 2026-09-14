@@ -21,7 +21,6 @@ constexpr uint8_t SENSOR_VALID_WIND_DIRECTION = 1u << 2;
 constexpr uint8_t SENSOR_VALID_RAIN_COUNT     = 1u << 3;
 constexpr uint8_t SENSOR_VALID_WIND_SPEED     = 1u << 4;
 constexpr uint8_t SENSOR_VALID_DS3231         = 1u << 5;
-
 constexpr uint8_t ALL_SENSORS_VALID =
     SENSOR_VALID_BME280 |
     SENSOR_VALID_VEML7700 |
@@ -29,6 +28,20 @@ constexpr uint8_t ALL_SENSORS_VALID =
     SENSOR_VALID_WIND_SPEED |
     SENSOR_VALID_WIND_DIRECTION |
     SENSOR_VALID_DS3231;
+
+constexpr EventBits_t WATCHDOG_BME280         = 1 << 0;
+constexpr EventBits_t WATCHDOG_VEML7700       = 1 << 1;
+constexpr EventBits_t WATCHDOG_WIND_DIRECTION = 1 << 2;
+constexpr EventBits_t WATCHDOG_RAIN_COUNT     = 1 << 3;
+constexpr EventBits_t WATCHDOG_WIND_SPEED     = 1 << 4;
+constexpr EventBits_t WATCHDOG_DS3231         = 1 << 5;
+constexpr EventBits_t WATCHDOG_ALL =
+    WATCHDOG_BME280 |
+    WATCHDOG_VEML7700 |
+    WATCHDOG_WIND_DIRECTION |
+    WATCHDOG_RAIN_COUNT |
+    WATCHDOG_WIND_SPEED |
+    WATCHDOG_DS3231;
 
 struct WeatherData {
     float temperature = 0.0f;
